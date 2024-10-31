@@ -10,7 +10,6 @@ webrtc = { git = "https://github.com/webrtc-rs/webrtc.git" }
 
 tokio = { version = "1.32.0", features = ["full"] }
 env_logger = "0.11.3"
-clap = "3"
 hyper = { version = "0.14.27", features = ["full"] }
 # signal = { path = "examples/signal" }
 tokio-util = { version = "0.7", features = ["codec"] }
@@ -27,3 +26,4 @@ base64 = "0.22.1"
 portable-pty = "0.8.1"
 tokio-tungstenite = "0.18"
 futures-util = "0.3.31"
+clap = { version = "4.5.20", features = ["derive"] }

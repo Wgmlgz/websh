@@ -127,16 +127,15 @@ pub struct Peer {
 
 pub type PeerMap = Arc<Mutex<HashMap<String, Peer>>>;
 
-pub async fn connect() -> Result<()> {
+pub async fn connect(my_name: String, url: String) -> Result<()> {
     // Connect to the signaling server
-    let (ws_stream, _) = connect_async("ws://localhost:8002").await?;
+    let (ws_stream, _) = connect_async(url).await?;
     let (write, mut read) = ws_stream.split();
     let write = Arc::new(Mutex::new(write));
-    // Register with unique name
-    let my_name = "server1"; // Replace with your server's unique name
+
     let register_msg = Message {
         r#type: "register".to_string(),
-        name: Some(my_name.to_string()),
+        name: Some(my_name.clone()),
         peer_type: Some("server".to_string()),
         session: None,
         target: None,
@@ -240,6 +239,8 @@ pub async fn connect() -> Result<()> {
 
                         peer_connection.set_remote_description(sdp).await?;
 
+                        let my_name = my_name.clone();
+
                         if peer_connection.remote_description().await.unwrap().sdp_type
                             == RTCSdpType::Offer
                         {
@@ -249,7 +250,7 @@ pub async fn connect() -> Result<()> {
 
                             let signal_msg = Message {
                                 r#type: "signal".to_string(),
-                                name: Some(my_name.to_string()),
+                                name: Some(my_name.clone().to_string()),
                                 target: Some(message.clone().from.unwrap()),
                                 data: Some(serde_json::to_string(&local_desc)?),
                                 session: None,
@@ -269,6 +270,7 @@ pub async fn connect() -> Result<()> {
                         let message_clone = message.clone();
                         peer_connection.on_ice_candidate(Box::new(move |candidate| {
                             let from = message_clone.clone().from;
+                            let my_name = my_name.clone();
                             if let Some(candidate) = candidate {
                                 let write_clone = write.clone();
                                 tokio::spawn(async move {

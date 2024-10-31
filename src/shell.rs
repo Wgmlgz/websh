@@ -1,11 +1,27 @@
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::thread;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::Duration;
 
-pub async fn handle_pty(tx: Sender<String>, mut rx: Receiver<String>) {
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, broadcast};
+
+#[derive(Clone)]
+pub struct PTYSession {
+    pub to_pty: mpsc::Sender<String>,         // To send data to PTY
+    pub from_pty: broadcast::Sender<String>,  // To receive data from PTY
+    pub done_tx: mpsc::Sender<()>,            // To signal done
+}
+
+
+pub type SessionMap = Arc<Mutex<HashMap<String, PTYSession>>>;
+
+pub async fn handle_pty(
+    tx: broadcast::Sender<String>,    // From PTY to clients
+    mut rx: mpsc::Receiver<String>,   // From clients to PTY
+    mut done_rx: Receiver<()>,
+) {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -47,7 +63,7 @@ pub async fn handle_pty(tx: Sender<String>, mut rx: Receiver<String>) {
                     Ok(n) => {
                         let msg = String::from_utf8_lossy(&buf[..n]).to_string();
                         // Use blocking send to the async channel (note this can block the thread if the channel is full)
-                        match tx.blocking_send(msg) {
+                        match tx.send(msg) {
                             Ok(_) => (),
                             Err(e) => {
                                 eprintln!("Failed to send message to async context: {}", e);
@@ -77,8 +93,17 @@ pub async fn handle_pty(tx: Sender<String>, mut rx: Receiver<String>) {
         let _ = child.wait();
     });
 
-    loop {
-        tokio::time::sleep(Duration::from_millis(1000)).await;
-        dbg!("pending");
-    }
+    tokio::select! {
+        _ = done_rx.recv() => {
+            println!("received done signal!");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!();
+        }
+    };
+
+    // loop {
+    //     tokio::time::sleep(Duration::from_millis(1000)).await;
+    //     dbg!("pending");
+    // }
 }

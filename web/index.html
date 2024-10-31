@@ -40,14 +40,13 @@
       let sendChannel = pc.createDataChannel('foo', dataChannelOptions);
       sendChannel.onclose = () => console.log('sendChannel has closed');
       sendChannel.onopen = () => console.log('sendChannel has opened');
-      const enc = new TextDecoder("utf-8");
+      const enc = new TextDecoder('utf-8');
       sendChannel.onmessage = async e => {
-
         const data = e.data;
         // console.log(e);
         // const data = enc.decode(e.data);
         console.log(data);
-        
+
         term.write(data);
         // log(
         //  `Message from DataChannel '${sendChannel.label}' payload '$/{e.data}'`
@@ -98,6 +97,85 @@
           alert(e);
         }
       };
+
+      const socket = new WebSocket('ws://localhost:8000');
+
+      socket.onopen = () => {
+        // Register with unique name
+        const myName = String(Math.random()); // Replace with user's unique name
+        socket.send(
+          JSON.stringify({
+            type: 'register',
+            name: myName,
+            peerType: 'user',
+          })
+        );
+      };
+
+      socket.onmessage = async event => {
+        const message = JSON.parse(event.data);
+        switch (message.type) {
+          case 'connection_request':
+            // Users don't handle connection requests
+            break;
+          case 'signal':
+            const data = JSON.parse(message.data);
+            if (data.type === 'answer') {
+              await pc.setRemoteDescription(new RTCSessionDescription(data));
+            } else if (data.candidate) {
+              await pc.addIceCandidate(new RTCIceCandidate(data));
+            }
+            break;
+          case 'error':
+            console.error('Error:', message.message);
+            break;
+          default:
+            break;
+        }
+      };
+
+      window.startSession = async () => {
+        const targetServer = document.getElementById('targetServer').value;
+        if (targetServer === '') {
+          return alert('Target server name must not be empty');
+        }
+        const targetSession = document.getElementById('targetSession').value;
+        if (targetSession === '') {
+          return alert('Target session name must not be empty');
+        }
+
+        // Send connection request to signaling server
+        socket.send(
+          JSON.stringify({
+            type: 'connect',
+            target: targetServer,
+          })
+        );
+
+        // Create offer and send it via the signaling server
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.send(
+          JSON.stringify({
+            type: 'signal',
+            target: targetServer,
+            session: targetSession,
+            data: JSON.stringify(pc.localDescription),
+          })
+        );
+      };
+
+      pc.onicecandidate = event => {
+        if (event.candidate) {
+          socket.send(
+            JSON.stringify({
+              type: 'signal',
+              target: document.getElementById('targetServer').value,
+              data: JSON.stringify(event.candidate),
+            })
+          );
+        }
+      };
     </script>
   </head>
   <body>
@@ -112,6 +190,11 @@
     <br />
     <button onclick="window.sendMessage()">Send Message</button> <br />
 
+    
+    Target Server Name:
+    <input id="targetServer" type="text" /> <br />
+    <input id="targetSession" type="text" /> <br />
+    <button onclick="window.startSession()">Start Session</button> <br />
     <div id="logs"></div>
     <!--   <script>
       const term = new Terminal();

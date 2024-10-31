@@ -1,17 +1,18 @@
 use crate::shell::{handle_pty, PTYSession, SessionMap};
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use std::sync::Arc;
 use tokio::sync::mpsc::{self};
+use tokio::sync::{broadcast, Mutex};
 use tokio_tungstenite::connect_async;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
+use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_server::RTCIceServer;
 use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
@@ -20,7 +21,7 @@ use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct Message {
     r#type: String,
     name: Option<String>,
@@ -39,14 +40,6 @@ fn on_data_channel(d: Arc<RTCDataChannel>, session: Option<String>, session_map:
     let d_label = d.label().to_owned();
     let d_id = d.id();
     println!("New DataChannel {d_label} {d_id}");
-
-    // let (tx, mut rx) = mpsc::channel::<String>(100);
-    // let (ptx, prx) = mpsc::channel::<String>(100);
-
-    // // Start the PTY handler in its own thread
-    // tokio::spawn(async {
-    //     handle_pty(tx, prx, done_rx).await;
-    // });
 
     // Check if session already exists
     let pty_session = {
@@ -127,11 +120,18 @@ fn on_data_channel(d: Arc<RTCDataChannel>, session: Option<String>, session_map:
     }));
 }
 
+#[derive(Clone)]
+pub struct Peer {
+    pub peer_connection: Arc<RTCPeerConnection>, // To signal done
+}
+
+pub type PeerMap = Arc<Mutex<HashMap<String, Peer>>>;
+
 pub async fn connect() -> Result<()> {
     // Connect to the signaling server
-    let (ws_stream, _) = connect_async("ws://amogos.pro:8002").await?;
-    let (mut write, mut read) = ws_stream.split();
-
+    let (ws_stream, _) = connect_async("ws://localhost:8002").await?;
+    let (write, mut read) = ws_stream.split();
+    let write = Arc::new(Mutex::new(write));
     // Register with unique name
     let my_name = "server1"; // Replace with your server's unique name
     let register_msg = Message {
@@ -144,6 +144,8 @@ pub async fn connect() -> Result<()> {
         from: None,
     };
     write
+        .lock()
+        .await
         .send(tokio_tungstenite::tungstenite::Message::Text(
             serde_json::to_string(&register_msg)?,
         ))
@@ -181,7 +183,8 @@ pub async fn connect() -> Result<()> {
         ..Default::default()
     };
 
-    let session_map = Arc::new(Mutex::new(HashMap::default()));
+    let session_map: SessionMap = Arc::new(std::sync::Mutex::new(HashMap::default()));
+    let peer_map: PeerMap = Arc::new(Mutex::new(HashMap::default()));
     // Handle incoming messages
     // let write_clone = write.clone();
     while let Some(msg) = read.next().await {
@@ -200,7 +203,7 @@ pub async fn connect() -> Result<()> {
                     }
                     "signal" => {
                         // Handle signaling messages from the user
-                        let data = message.data.unwrap();
+                        let data = message.clone().data.unwrap();
                         let sdp: RTCSessionDescription =
                             serde_json::from_str::<RTCSessionDescription>(&data)?;
 
@@ -228,9 +231,10 @@ pub async fn connect() -> Result<()> {
                             },
                         ));
 
+                        let message_clone = message.clone();
                         // Register data channel creation handling
                         peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-                            on_data_channel(d, message.session.clone(), session_map.clone());
+                            on_data_channel(d, message_clone.clone().session, session_map.clone());
                             Box::pin(async {})
                         }));
 
@@ -246,19 +250,66 @@ pub async fn connect() -> Result<()> {
                             let signal_msg = Message {
                                 r#type: "signal".to_string(),
                                 name: Some(my_name.to_string()),
-                                target: Some(message.from.unwrap()),
+                                target: Some(message.clone().from.unwrap()),
                                 data: Some(serde_json::to_string(&local_desc)?),
                                 session: None,
                                 peer_type: None,
                                 from: None,
                             };
                             write
+                                .lock()
+                                .await
                                 .send(tokio_tungstenite::tungstenite::Message::Text(
                                     serde_json::to_string(&signal_msg)?,
                                 ))
                                 .await?;
                         }
+                        let write = write.clone();
 
+                        let message_clone = message.clone();
+                        peer_connection.on_ice_candidate(Box::new(move |candidate| {
+                            let from = message_clone.clone().from;
+                            if let Some(candidate) = candidate {
+                                let write_clone = write.clone();
+                                tokio::spawn(async move {
+                                    let signal_msg = Message {
+                                        r#type: "candidate".to_string(),
+                                        name: Some(my_name.to_string()),
+                                        target: Some(from.clone().unwrap()),
+                                        data: Some(serde_json::to_string(&candidate).unwrap()),
+                                        session: None,
+                                        peer_type: None,
+                                        from: None,
+                                    };
+
+                                    let mut write_guard = write_clone.lock().await;
+
+                                    write_guard
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            serde_json::to_string(&signal_msg).unwrap(),
+                                        ))
+                                        .await
+                                        .unwrap();
+                                });
+                            }
+
+                            Box::pin(async {})
+                        }));
+                        {
+                            let user_name = message.clone().from.clone().unwrap();
+                            let mut map = peer_map.lock().await;
+                            if let Some(_) = map.get(&user_name) {
+                                eprintln!("Peer exists");
+                                // Session exists
+                            } else {
+                                map.insert(
+                                    user_name,
+                                    Peer {
+                                        peer_connection: peer_connection.clone(),
+                                    },
+                                );
+                            }
+                        }
                         tokio::spawn(async move {
                             println!("PenDING");
                             done_rx.recv().await;
@@ -268,6 +319,22 @@ pub async fn connect() -> Result<()> {
                             peer_connection.close().await.unwrap();
                         });
                         ()
+                    }
+                    "candidate" => {
+                        let user_name = message.from.unwrap();
+
+                        let map = peer_map.lock().await;
+                        if let Some(peer) = map.get(&user_name) {
+                            let data = message.data.unwrap();
+                            let candidate: RTCIceCandidateInit =
+                                serde_json::from_str::<RTCIceCandidateInit>(&data)?;
+                            if let Err(e) = peer.peer_connection.add_ice_candidate(candidate).await
+                            {
+                                println!("error adding ice candiate! {:}", e.to_string());
+                            }
+                        } else {
+                            eprintln!("peer not found")
+                        }
                     }
                     _ => {}
                 }

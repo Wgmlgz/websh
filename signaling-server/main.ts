@@ -2,6 +2,7 @@ interface Peer {
   name: string;
   socket: WebSocket;
   type: 'user' | 'server';
+  candidates: string[];
   connectedTo?: string;
 }
 
@@ -14,7 +15,7 @@ function handleWs(sock: WebSocket) {
   let peerType: 'user' | 'server' = 'user';
 
   try {
-    sock.onmessage = ev => {
+    sock.onmessage = (ev) => {
       const data = ev.data;
 
       const message = JSON.parse(data);
@@ -36,6 +37,7 @@ function handleWs(sock: WebSocket) {
             name: peerName,
             socket: sock,
             type: peerType,
+            candidates: [],
           });
           console.log(`Peer registered: ${peerName} (${peerType})`);
           break;
@@ -87,6 +89,43 @@ function handleWs(sock: WebSocket) {
           );
           break;
         }
+        case 'candidate': {
+          peerName = message.name;
+          const session = message.session;
+
+          // peerType = message.peerType;
+          if (!peers.has(peerName)) {
+            // Name already taken
+            sock.send(
+              JSON.stringify({ type: 'error', message: `Name don't exist` })
+            );
+            sock.close();
+            return;
+          }
+          peers.get(peerName)?.candidates.push(message.data);
+          console.log(`Forwarding candidate: ${peerName} (${peerType})`);
+          const connectedPeerName = message.target;
+          if (!connectedPeerName || !peers.has(connectedPeerName)) {
+            sock.send(
+              JSON.stringify({
+                type: 'error',
+                message: 'Target peer not found',
+              })
+            );
+            break;
+          }
+          const connectedPeer = peers.get(connectedPeerName)!;
+          console.log('sending to server');
+          connectedPeer.socket.send(
+            JSON.stringify({
+              type: 'candidate',
+              from: peerName,
+              session,
+              data: message.data,
+            })
+          );
+          break;
+        }
         default: {
           sock.send(
             JSON.stringify({ type: 'error', message: 'Unknown message type' })
@@ -95,7 +134,7 @@ function handleWs(sock: WebSocket) {
         }
       }
     };
-    sock.onclose = ev => {
+    sock.onclose = (ev) => {
       // Handle peer disconnection
       console.log(`Peer disconnected: ${peerName}`);
       const connectedPeerName = peers.get(peerName)?.connectedTo;
@@ -123,24 +162,7 @@ function handleWs(sock: WebSocket) {
   }
 }
 
-// console.log('Signaling server running on ws://localhost:8080');
-
-// for await (const req of serve(':8080')) {
-//   const { conn, r: bufReader, w: bufWriter, headers } = req;
-//   acceptWebSocket({
-//     conn,
-//     bufReader,
-//     bufWriter,
-//     headers,
-//   })
-//     .then(handleWs)
-//     .catch(async err => {
-//       console.error(`Failed to accept websocket: ${err}`);
-//       await req.respond({ status: 400 });
-//     });
-// }
-
-Deno.serve(req => {
+Deno.serve({ port: 8002, hostname: '0.0.0.0' }, (req) => {
   if (req.headers.get('upgrade') != 'websocket') {
     return new Response(null, { status: 501 });
   }

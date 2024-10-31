@@ -1,25 +1,10 @@
 use std::io::Write;
-use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use clap::{AppSettings, Arg, Command};
 
-use shell::handle_pty;
-use tokio::sync::mpsc::{self};
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::APIBuilder;
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
-use webrtc::data_channel::RTCDataChannel;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-
 pub mod shell;
 pub mod signal;
-
-
 
 fn app_setup() {
     let mut app = Command::new("data-channels")
@@ -70,7 +55,6 @@ fn app_setup() {
 async fn main() -> Result<()> {
     app_setup();
 
-
     signal::connect().await?;
     // // Wait for the offer to be pasted
     // let line = signal::must_read_stdin()?;
@@ -102,8 +86,6 @@ async fn main() -> Result<()> {
     // } else {
     //     println!("generate local_description failed!");
     // }
-
-
 
     Ok(())
 }

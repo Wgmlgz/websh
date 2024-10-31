@@ -24,7 +24,7 @@ function handleWs(sock: WebSocket) {
       switch (message.type) {
         case 'register':
           peerName = message.name;
-          peerType = message.peerType;
+          peerType = message.peer_type;
           if (peers.has(peerName)) {
             // Name already taken
             sock.send(

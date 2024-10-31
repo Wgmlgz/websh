@@ -25,6 +25,7 @@
     "@types/d3": "^7.4.3",
     "@types/eslint": "^9.6.0",
     "@types/lodash": "^4.17.10",
+    "@xterm/xterm": "^5.5.0",
     "autoprefixer": "^10.4.20",
     "axios": "^1.7.7",
     "bits-ui": "^0.21.16",
@@ -53,6 +54,7 @@
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.0.0",
     "unocss": "^0.62.2",
+    "uuid": "^11.0.2",
     "vite": "^5.0.3",
     "vitest": "^2.0.0",
     "zod": "^3.23.8"

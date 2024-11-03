@@ -13,18 +13,46 @@ export class ConnectionManager {
   constructor(public server_url: Writable<string>) {
     this.socket = this.setupWebSocket();
     this.pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: 'stun:stun.l.google.com:19302'
-        }
-      ]
+      iceServers:
+        [
+          {
+            urls: 'stun:stun.l.google.com:19302'
+          },
+          {
+            urls: "stun:stun.relay.metered.ca:80",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80",
+            username: "0b9bb54c33cb97cf80278546",
+            credential: "tn2fgenqlFxFvaYc",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:80?transport=tcp",
+            username: "0b9bb54c33cb97cf80278546",
+            credential: "tn2fgenqlFxFvaYc",
+          },
+          {
+            urls: "turn:global.relay.metered.ca:443",
+            username: "0b9bb54c33cb97cf80278546",
+            credential: "tn2fgenqlFxFvaYc",
+          },
+          {
+            urls: "turns:global.relay.metered.ca:443?transport=tcp",
+            username: "0b9bb54c33cb97cf80278546",
+            credential: "tn2fgenqlFxFvaYc",
+          },
+        ]
     });
     this.myName = uuidv4(); // Replace with user's unique name
     this.status = writable('starting');
   }
 
   setupWebSocket() {
-    const socket = new ReconnectingWebSocket(get(this.server_url));
+    const sus = () => {
+      return get(this.server_url)
+    }
+    const socket = new ReconnectingWebSocket(sus);
+
     socket.onopen = () => {
       // Register with unique name
       socket.send(
@@ -37,8 +65,29 @@ export class ConnectionManager {
       this.status.set('Connected to server');
       // onConnected();
     };
+
+    this.server_url.subscribe(() => {
+      console.log('sus');
+      socket.reconnect();
+    })
     return socket;
   }
+
+
+  updatePeerConnection(credentials: { username: string; password: string }) {
+    // Update the existing PeerConnection iceServers with new TURN credentials
+    const newIceServers: RTCIceServer[] = [
+      ...this.pc.getConfiguration().iceServers ?? [],
+      {
+        urls: `turn:amogos.pro:3478`, // Adjust the TURN server URL as necessary
+        username: credentials.username,
+        credential: credentials.password
+      }
+    ];
+    this.pc.setConfiguration({ iceServers: newIceServers });
+    this.status.set('TURN credentials updated');
+  }
+
 
   async startSession(targetServer: string, targetSession: string, term: Terminal) {
     if (!targetServer) {
@@ -65,6 +114,9 @@ export class ConnectionManager {
     };
 
     this.pc.oniceconnectionstatechange = () => this.status.set(this.pc.iceConnectionState);
+    this.pc.onconnectionstatechange = () => this.status.set(this.pc.connectionState);
+    this.pc.onsignalingstatechange = () => this.status.set(this.pc.signalingState);
+    this.pc.onicegatheringstatechange = () => this.status.set(this.pc.signalingState);
 
     this.pc.onnegotiationneeded = async () => {
       const offer = await this.pc.createOffer();
@@ -86,6 +138,10 @@ export class ConnectionManager {
     this.socket.onmessage = async (event) => {
       const message = JSON.parse(event.data);
       switch (message.type) {
+        case 'turn_credentials':
+          // Update RTCPeerConnection with TURN credentials received
+          this.updatePeerConnection(JSON.parse(message.data));
+          break;
         case 'connection_request':
           // Users don't handle connection requests
           break;

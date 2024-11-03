@@ -174,11 +174,41 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
         .build();
 
     // Prepare the configuration
-    let config = RTCConfiguration {
-        ice_servers: vec![RTCIceServer {
-            urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-            ..Default::default()
-        }],
+    let mut config = RTCConfiguration {
+        ice_servers: vec![
+            RTCIceServer {
+                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["stun:stun.relay.metered.ca:80".to_owned()],
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["turn:global.relay.metered.ca:80".to_owned()],
+                username: "0b9bb54c33cb97cf80278546".to_owned(),
+                credential: "tn2fgenqlFxFvaYc".to_owned(),
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["turn:global.relay.metered.ca:80?transport=tcp".to_owned()],
+                username: "0b9bb54c33cb97cf80278546".to_owned(),
+                credential: "tn2fgenqlFxFvaYc".to_owned(),
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["turn:global.relay.metered.ca:443".to_owned()],
+                username: "0b9bb54c33cb97cf80278546".to_owned(),
+                credential: "tn2fgenqlFxFvaYc".to_owned(),
+                ..Default::default()
+            },
+            RTCIceServer {
+                urls: vec!["turns:global.relay.metered.ca:443?transport=tcp".to_owned()],
+                username: "0b9bb54c33cb97cf80278546".to_owned(),
+                credential: "tn2fgenqlFxFvaYc".to_owned(),
+                ..Default::default()
+            },
+        ],
         ..Default::default()
     };
 
@@ -186,6 +216,7 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
     let peer_map: PeerMap = Arc::new(Mutex::new(HashMap::default()));
     // Handle incoming messages
     // let write_clone = write.clone();
+
     while let Some(msg) = read.next().await {
         match msg {
             Result::Ok(tokio_tungstenite::tungstenite::Message::Text(text)) => {
@@ -194,6 +225,26 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
 
                 let message: Message = serde_json::from_str(&text)?;
                 match message.r#type.as_str() {
+                    "turn_credentials" => {
+                        let data = message.clone().data.unwrap();
+                        dbg!(&data);
+                        // Deserialize the credentials
+                        let credentials: HashMap<String, String> = serde_json::from_str(&data)?;
+                        let username = credentials.get("username").cloned().unwrap_or_default();
+                        let password = credentials.get("password").cloned().unwrap_or_default();
+
+                        dbg!(&username);
+                        dbg!(&password);
+                        // Update the RTCConfiguration
+                        // let mut config = peer_connection.get_configuration();
+                        // config.ice_servers.push(RTCIceServer {
+                        //     urls: vec![String::from("turn:amogos.pro:3478")], // Adjust the TURN server URL as necessary
+                        //     username,
+                        //     credential: password,
+                        // });
+                        // println!("GOT CREDS");
+                        // peer_connection.set_configuration(&config).await?;
+                    }
                     "connection_request" => {
                         let user_name = message.from.unwrap();
                         println!("Connection request from {}", user_name);
@@ -273,12 +324,13 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
                             let my_name = my_name.clone();
                             if let Some(candidate) = candidate {
                                 let write_clone = write.clone();
+                                dbg!(&candidate);
                                 tokio::spawn(async move {
                                     let signal_msg = Message {
                                         r#type: "candidate".to_string(),
                                         name: Some(my_name.to_string()),
                                         target: Some(from.clone().unwrap()),
-                                        data: Some(serde_json::to_string(&candidate).unwrap()),
+                                        data: Some(candidate.to_string().unwrap()),
                                         session: None,
                                         peer_type: None,
                                         from: None,

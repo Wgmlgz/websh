@@ -14,7 +14,7 @@
 
   const term = new Terminal();
 
-  const server_url = writable('ws://localhost:8002');
+  const server_url = writable('wss://dev-websh.amogos.pro/signaling');
   let manager = new ConnectionManager(server_url);
   let status = manager.status;
   onMount(() => {
@@ -24,6 +24,7 @@
   const startSession = () => {
     manager.startSession(targetServer, targetSession, term);
   };
+  $: console.log($status);
 </script>
 
 <div>

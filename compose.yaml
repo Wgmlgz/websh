@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  coturn:
+    image: coturn/coturn
+    environment:
+      - DETECT_EXTERNAL_IP=yes
+      - DETECT_RELAY_IP=yes
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49152-65535:49152-65535/udp"
+    command: "--fingerprint --lt-cred-mech --user myuser:mypass --realm amogos.pro"
+    network_mode: "host"

@@ -6,5 +6,8 @@ export default defineConfig({
 	plugins: [sveltekit(), UnoCSS()],
 	test: {
 		include: ['src/**/*.{test,spec}.{js,ts}']
+	},
+	server: {
+		hmr: false,
 	}
 });

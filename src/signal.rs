@@ -329,7 +329,7 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
                                         r#type: "candidate".to_string(),
                                         name: Some(my_name.to_string()),
                                         target: Some(from.clone().unwrap()),
-                                        data: Some(candidate.to_string().unwrap()),
+                                        data: Some(serde_json::to_string(&candidate.to_json().unwrap()).unwrap()),
                                         session: None,
                                         peer_type: None,
                                         from: None,

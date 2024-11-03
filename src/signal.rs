@@ -324,7 +324,6 @@ pub async fn connect(my_name: String, url: String) -> Result<()> {
                             let my_name = my_name.clone();
                             if let Some(candidate) = candidate {
                                 let write_clone = write.clone();
-                                dbg!(&candidate);
                                 tokio::spawn(async move {
                                     let signal_msg = Message {
                                         r#type: "candidate".to_string(),

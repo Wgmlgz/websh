@@ -1,7 +1,9 @@
 use anyhow::{Ok, Result};
 
 use clap::Parser;
+use env_logger::Env;
 
+pub mod peer;
 pub mod shell;
 pub mod signal;
 
@@ -19,12 +21,21 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
 
-    signal::connect(
-        cli.name.unwrap_or("server1".into()),
-        cli.url.unwrap_or("ws://localhost:8002".into()),
-    )
-    .await?;
+    loop {
+        log::info!("Starting app");
+        if let Err(e) = signal::connect(
+            cli.name.clone().unwrap_or("server1".into()),
+            cli.url
+                .clone()
+                .unwrap_or("wss://websh.amogos.pro/signaling".into()),
+        )
+        .await
+        {
+            log::error!("Error while running app: {}", e.to_string());
+        };
+    }
 
     Ok(())
 }

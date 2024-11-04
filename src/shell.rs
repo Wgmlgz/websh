@@ -66,13 +66,13 @@ pub async fn handle_pty(
                         match tx.send(msg) {
                             Ok(_) => (),
                             Err(e) => {
-                                eprintln!("Failed to send message to async context: {}", e);
+                                log::error!("Failed to send message to async context: {}", e);
                                 break;
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to read from PTY: {}", e);
+                        log::error!("Failed to read from PTY: {}", e);
                         break;
                     }
                 }
@@ -95,11 +95,11 @@ pub async fn handle_pty(
 
     tokio::select! {
         _ = done_rx.recv() => {
-            println!("received done signal!");
+            log::info!("Received done signal");
         }
-        _ = tokio::signal::ctrl_c() => {
-            println!();
-        }
+        // _ = tokio::signal::ctrl_c() => {
+        //     log::info!("Received ctrlc");
+        // }
     };
 
     // loop {

@@ -6,7 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-webrtc = { git = "https://github.com/webrtc-rs/webrtc.git" } 
+webrtc = { git = "https://github.com/webrtc-rs/webrtc.git" }
 
 tokio = { version = "1.32.0", features = ["full"] }
 env_logger = "0.11.3"
@@ -21,7 +21,7 @@ lazy_static = "1"
 rand = "0.8"
 memchr = "2.1.1"
 base64 = "0.22.1"
-portable-pty = "0.8.1"
+portable-pty = { version = "0.8.1", features = ["serde", "serde_derive", "serde_support"] }
 tokio-tungstenite = { version = "0.24.0", features = ["native-tls"] }
 futures-util = "0.3.31"
 clap = { version = "4.5.20", features = ["derive"] }

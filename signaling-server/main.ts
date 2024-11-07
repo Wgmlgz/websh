@@ -11,7 +11,6 @@ interface Peer {
 
 const peers = new Map<string, Peer>();
 
-
 function generateTurnCredentials(usernameBase: string, ttl: number = 86400): { username: string; password: string } {
   const secret = Deno.env.get("COTURN_SHARED_SECRET");
   if (!secret) throw new Error("Shared secret not set in environment variables.");

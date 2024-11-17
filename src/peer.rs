@@ -1,5 +1,7 @@
+use crate::port::handle_port;
 use crate::shell::{handle_pty, PTYSession, SessionMap};
 use anyhow::{anyhow, Ok, Result};
+use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -48,15 +50,19 @@ pub fn on_data_channel(
             pty_session.clone()
         } else {
             // Session does not exist, create new PTYSession
-            let (to_pty_tx, to_pty_rx) = mpsc::channel::<String>(100);
-            let (from_pty_tx, _) = broadcast::channel::<String>(100);
+            let (to_pty_tx, to_pty_rx) = mpsc::channel::<Bytes>(100);
+            let (from_pty_tx, _) = broadcast::channel::<Bytes>(100);
             let (done_tx, done_rx) = mpsc::channel::<()>(1);
 
             // Start PTY handler
             tokio::spawn({
                 let from_pty_tx = from_pty_tx.clone();
                 async move {
-                    handle_pty(from_pty_tx, to_pty_rx, done_rx).await;
+                    match d_label.as_str() {
+                        "web_shell" => handle_pty(from_pty_tx, to_pty_rx, done_rx).await,
+                        "port" => handle_port(from_pty_tx, to_pty_rx, done_rx).await,
+                        _ => log::error!("unknown data channel"),
+                    }
                 }
             });
 
@@ -96,7 +102,7 @@ pub fn on_data_channel(
             // Launch a task to handle sending messages received via the channel
             tokio::spawn(async move {
                 while let Result::Ok(message) = from_pty_rx.recv().await {
-                    if d_clone.send_text(message).await.is_err() {
+                    if d_clone.send(&message).await.is_err() {
                         log::error!("Failed to send message over data channel");
                         break;
                     }
@@ -108,11 +114,11 @@ pub fn on_data_channel(
     // Register text message handling
     d.on_message(Box::new(move |msg: DataChannelMessage| {
         let ptx_clone = to_pty.clone(); // Clone the sender for use in the async context
-        let msg_str = String::from_utf8(msg.data.to_vec()).unwrap(); // Convert the received message to a String
+        // let msg_str = String::from_utf8(msg.data.to_vec()).unwrap(); // Convert the received message to a String
 
         Box::pin(async move {
             // Send the message to the PTY task asynchronously
-            if let Err(e) = ptx_clone.send(msg_str).await {
+            if let Err(e) = ptx_clone.send(msg.data).await {
                 log::error!("Failed to send message to PTY: {}", e);
             }
         })

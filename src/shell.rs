@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::{Deserialize, Serialize};
 use std::thread;
@@ -9,8 +10,8 @@ use tokio::sync::{broadcast, mpsc};
 
 #[derive(Clone)]
 pub struct PTYSession {
-    pub to_pty: mpsc::Sender<String>,        // To send data to PTY
-    pub from_pty: broadcast::Sender<String>, // To receive data from PTY
+    pub to_pty: mpsc::Sender<Bytes>,        // To send data to PTY
+    pub from_pty: broadcast::Sender<Bytes>, // To receive data from PTY
     pub done_tx: mpsc::Sender<()>,           // To signal done
 }
 
@@ -24,8 +25,8 @@ pub struct ShellMsg {
 }
 
 pub async fn handle_pty(
-    tx: broadcast::Sender<String>,  // From PTY to clients
-    mut rx: mpsc::Receiver<String>, // From clients to PTY
+    tx: broadcast::Sender<Bytes>,  // From PTY to clients
+    mut rx: mpsc::Receiver<Bytes>, // From clients to PTY
     mut done_rx: Receiver<()>,
 ) {
     let pty_system = native_pty_system();
@@ -77,7 +78,7 @@ pub async fn handle_pty(
                         .unwrap();
 
                         // Use blocking send to the async channel (note this can block the thread if the channel is full)
-                        match tx.send(json) {
+                        match tx.send(json.into()) {
                             Ok(_) => (),
                             Err(e) => {
                                 log::error!("Failed to send message to async context: {}", e);
@@ -97,7 +98,10 @@ pub async fn handle_pty(
     // Asynchronously receive messages and write to PTY
     tokio::spawn(async move {
         while let Some(json) = rx.recv().await {
-            let msg: ShellMsg = serde_json::from_str(json.as_str()).unwrap(); 
+            let sus = json.to_vec();
+            let sus = sus.as_slice();
+            let msg: ShellMsg =
+                serde_json::from_str(String::from_utf8_lossy(sus).to_string().as_str()).unwrap();
             if let Some(msg) = msg.input {
                 writer.write_all(msg.as_bytes()).unwrap();
                 writer.flush().unwrap();
@@ -106,7 +110,6 @@ pub async fn handle_pty(
             if let Some(size) = msg.resize {
                 pair.master.resize(size).unwrap();
             };
-
         }
     });
 

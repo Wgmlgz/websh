@@ -2,8 +2,12 @@ use anyhow::{Ok, Result};
 
 use clap::Parser;
 use env_logger::Env;
+use futures_util::StreamExt;
+use signal::State;
+use tokio_tungstenite::tungstenite;
 
 pub mod peer;
+pub mod port;
 pub mod shell;
 pub mod signal;
 
@@ -18,6 +22,7 @@ struct Cli {
     debug: u8,
 }
 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -27,6 +32,7 @@ async fn main() -> Result<()> {
         log::info!("Starting app");
         if let Err(e) = signal::connect(
             cli.name.clone().unwrap_or("server1".into()),
+            "server".into(),
             cli.url
                 .clone()
                 .unwrap_or("wss://websh.amogos.pro/signaling".into()),

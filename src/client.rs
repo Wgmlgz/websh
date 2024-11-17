@@ -13,7 +13,9 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
 };
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
+use webrtc::{
+    data_channel::data_channel_message::DataChannelMessage, peer_connection::RTCPeerConnection,
+};
 
 pub mod peer;
 pub mod port;
@@ -34,6 +36,7 @@ pub struct Cli {
 pub async fn start_client(cli: Cli) -> Result<()> {
     let cli = Arc::new(cli);
 
+    let peer_connection = connect_to_peer(cli).await?;
     // Define the port to listen on
     let addr = "127.0.0.1:2222"; // Adjust as needed
 
@@ -42,9 +45,9 @@ pub async fn start_client(cli: Cli) -> Result<()> {
     log::info!("TCP server listening on {}", addr);
 
     while let io::Result::Ok((tcp_stream, _)) = listener.accept().await {
-        let cli = cli.clone();
+        let peer_connection2 = peer_connection.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_client(cli, tcp_stream).await {
+            if let Err(e) = handle_client(peer_connection2, tcp_stream).await {
                 log::error!("Error while handle_client {}", e.to_string());
             }
         });
@@ -54,7 +57,7 @@ pub async fn start_client(cli: Cli) -> Result<()> {
     Ok(())
 }
 
-async fn handle_client(cli: Arc<Cli>, tcp_stream: TcpStream) -> Result<()> {
+async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
     log::info!("new connection");
     let name = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
     let session = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
@@ -82,8 +85,6 @@ async fn handle_client(cli: Arc<Cli>, tcp_stream: TcpStream) -> Result<()> {
 
     let (peer_connection, _done_rx) = state.create_peer_connection(target.clone()).await?;
 
-    let d = peer_connection.create_data_channel("port", None).await?;
-
     {
         let user_name = target.clone();
         let mut map = state.peer_map.lock().await;
@@ -105,6 +106,7 @@ async fn handle_client(cli: Arc<Cli>, tcp_stream: TcpStream) -> Result<()> {
     let target2 = target.clone();
     let session = session.clone();
     let signaling2 = state.signaling.clone();
+
     peer_connection.on_negotiation_needed(Box::new(move || {
         let peer_connection2 = peer_connection2.clone();
 
@@ -147,6 +149,18 @@ async fn handle_client(cli: Arc<Cli>, tcp_stream: TcpStream) -> Result<()> {
     state
         .signaling
         .send(serde_json::to_string(&signal_msg).unwrap());
+
+    // create dummy data channel to force on_negotiation_needed
+    let _ = peer_connection.create_data_channel("dummy", None).await?;
+
+    Ok(peer_connection)
+}
+
+async fn handle_client(
+    peer_connection: Arc<RTCPeerConnection>,
+    tcp_stream: TcpStream,
+) -> Result<()> {
+    let d = peer_connection.create_data_channel("port", None).await?;
 
     let (to_pty_tx, mut to_pty_rx) = mpsc::channel::<Bytes>(100);
 

@@ -17,51 +17,61 @@ pub struct Peer {
 
 pub type PeerMap = Arc<Mutex<HashMap<String, Peer>>>;
 
+pub fn create_session(d_label: String) -> Result<PTYSession> {
+    // Session does not exist, create new PTYSession
+    let (to_pty_tx, to_pty_rx) = mpsc::channel::<Bytes>(100);
+    let (from_pty_tx, _) = broadcast::channel::<Bytes>(100);
+    let (done_tx, done_rx) = mpsc::channel::<()>(1);
+
+    // Start PTY handler
+    tokio::spawn({
+        let from_pty_tx = from_pty_tx.clone();
+        async move {
+            match d_label.as_str() {
+                "web_shell" => handle_pty(from_pty_tx, to_pty_rx, done_rx).await,
+                "port" => handle_port(from_pty_tx, to_pty_rx, done_rx).await,
+                _ => log::error!("unknown data channel"),
+            }
+        }
+    });
+
+    let pty_session = PTYSession {
+        to_pty: to_pty_tx.clone(),
+        from_pty: from_pty_tx.clone(),
+        done_tx: done_tx.clone(),
+    };
+    Ok(pty_session)
+}
+
 pub fn on_data_channel(
     d: Arc<RTCDataChannel>,
     session: Option<String>,
     session_map: SessionMap,
 ) -> Result<()> {
-    let session_id = session.unwrap_or_else(|| "default".to_string());
-
     let d_label = d.label().to_owned();
     let d_id = d.id();
+    if d_label == "dummy" {
+        return Ok(());
+    }
+
+    let session_id = session.unwrap_or_else(|| "default".to_string());
     log::info!("New DataChannel {d_label} {d_id}");
 
     // Check if session already exists
     let pty_session = {
         let mut map = session_map.lock().unwrap();
-        if let Some(pty_session) = map.get(&session_id) {
-            // Session exists
-            pty_session.clone()
+        if d_label == "port" {
+            let session = create_session(d_label)?;
+            map.insert(session_id.clone(), session.clone());
+            session
         } else {
-            // Session does not exist, create new PTYSession
-            let (to_pty_tx, to_pty_rx) = mpsc::channel::<Bytes>(100);
-            let (from_pty_tx, _) = broadcast::channel::<Bytes>(100);
-            let (done_tx, done_rx) = mpsc::channel::<()>(1);
-
-            // Start PTY handler
-            tokio::spawn({
-                let from_pty_tx = from_pty_tx.clone();
-                async move {
-                    match d_label.as_str() {
-                        "web_shell" => handle_pty(from_pty_tx, to_pty_rx, done_rx).await,
-                        "port" => handle_port(from_pty_tx, to_pty_rx, done_rx).await,
-                        _ => log::error!("unknown data channel"),
-                    }
-                }
-            });
-
-            let pty_session = PTYSession {
-                to_pty: to_pty_tx.clone(),
-                from_pty: from_pty_tx.clone(),
-                done_tx: done_tx.clone(),
-            };
-
-            // Store PTYSession in map
-            map.insert(session_id.clone(), pty_session.clone());
-
-            pty_session
+            if let Some(pty_session) = map.get(&session_id) {
+                pty_session.clone()
+            } else {
+                let session = create_session(d_label)?;
+                map.insert(session_id.clone(), session.clone());
+                session
+            }
         }
     };
 

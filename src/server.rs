@@ -1,10 +1,7 @@
-use anyhow::{Ok, Result};
+use anyhow::Result;
 
 use clap::Parser;
 use env_logger::Env;
-use futures_util::StreamExt;
-use signal::State;
-use tokio_tungstenite::tungstenite;
 
 pub mod peer;
 pub mod port;
@@ -21,7 +18,6 @@ struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     debug: u8,
 }
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,6 +38,4 @@ async fn main() -> Result<()> {
             log::error!("Error while running app: {}", e.to_string());
         };
     }
-
-    Ok(())
 }

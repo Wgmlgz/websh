@@ -1,27 +1,13 @@
 use crate::port::handle_port;
 use crate::shell::{handle_pty, PTYSession, SessionMap};
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Ok, Result};
 use bytes::Bytes;
-use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::{self};
 use tokio::sync::{broadcast, Mutex};
-use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite;
-use webrtc::api::interceptor_registry::register_default_interceptors;
-use webrtc::api::media_engine::MediaEngine;
-use webrtc::api::{APIBuilder, API};
 use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
-use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
-use webrtc::ice_transport::ice_server::RTCIceServer;
-use webrtc::interceptor::registry::Registry;
-use webrtc::peer_connection::configuration::RTCConfiguration;
-use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
-use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
-use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
 use webrtc::peer_connection::RTCPeerConnection;
 
 #[derive(Clone)]
@@ -114,7 +100,7 @@ pub fn on_data_channel(
     // Register text message handling
     d.on_message(Box::new(move |msg: DataChannelMessage| {
         let ptx_clone = to_pty.clone(); // Clone the sender for use in the async context
-        // let msg_str = String::from_utf8(msg.data.to_vec()).unwrap(); // Convert the received message to a String
+                                        // let msg_str = String::from_utf8(msg.data.to_vec()).unwrap(); // Convert the received message to a String
 
         Box::pin(async move {
             // Send the message to the PTY task asynchronously

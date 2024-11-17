@@ -1,21 +1,17 @@
-use crate::shell::{handle_pty, PTYSession, SessionMap};
-use anyhow::{anyhow, Error, Ok, Result};
-use bytes::Bytes;
+use crate::shell::SessionMap;
+use anyhow::{anyhow, Ok, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
-use tokio::io::{self, AsyncReadExt};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{self};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::{APIBuilder, API};
-use webrtc::data_channel::data_channel_message::DataChannelMessage;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 use webrtc::ice_transport::ice_server::RTCIceServer;
@@ -24,78 +20,103 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::{self, RTCPeerConnection};
+use webrtc::peer_connection::RTCPeerConnection;
 
 use crate::peer::{on_data_channel, Peer, PeerMap};
 
 #[derive(Serialize, Deserialize, Clone)]
-struct Message {
-    r#type: String,
-    name: Option<String>,
-    target: Option<String>,
-    session: Option<String>,
-    data: Option<String>,
-    peer_type: Option<String>,
-    from: Option<String>,
+pub struct Message {
+    pub r#type: String,
+    pub name: Option<String>,
+    pub target: Option<String>,
+    pub session: Option<String>,
+    pub data: Option<String>,
+    pub peer_type: Option<String>,
+    pub from: Option<String>,
 }
 
-trait Signaling {
+pub trait Signaling {
     fn send(&self, msg: String);
-    fn next(&mut self) -> impl Future<Output = Option<String>>;
+    fn next(&self) -> impl Future<Output = Option<String>>;
 }
 
 pub struct WsSignaling {
-    pub write: Arc<
-        Mutex<
-            futures_util::stream::SplitSink<
-                tokio_tungstenite::WebSocketStream<
-                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-                >,
-                tungstenite::Message,
-            >,
-        >,
-    >,
-    pub read: futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-    >,
+    sender: mpsc::Sender<String>,
+    receiver: Arc<Mutex<mpsc::Receiver<Option<String>>>>,
+}
+
+impl WsSignaling {
+    pub async fn new(url: &str) -> Result<Self> {
+        let (connect_tx, mut connect_rx) = mpsc::channel(32);
+        let (msg_tx, msg_rx) = mpsc::channel(32);
+
+        let (socket, _) = connect_async(url).await?;
+        let (write, read) = socket.split();
+
+        // Sender task
+        tokio::spawn(async move {
+            let mut write = write;
+            while let Some(msg) = connect_rx.recv().await {
+                write.send(tungstenite::Message::Text(msg)).await.unwrap();
+            }
+        });
+
+        // Receiver task
+        tokio::spawn(async move {
+            let mut read = read;
+            let msg_tx = msg_tx.clone();
+
+            while let Some(msg) = read.next().await {
+                match msg {
+                    Result::Ok(tungstenite::Message::Text(text)) => {
+                        if let Err(e) = msg_tx.send(Some(text)).await {
+                            log::error!("Error while handling websocket message {}", e.to_string());
+                        }
+                    }
+                    Result::Err(e) => {
+                        log::error!("Error with websocket message {}", e.to_string());
+                    }
+                    _ => {
+                        log::warn!("Websocket message type is not supported ");
+                    }
+                }
+                // let text_msg = match msg {
+                //     Result::Ok(tungstenite::Message::Text(text)) => Some(text),
+                //     _ => None,
+                // };
+            }
+            let _ = msg_tx.send(None).await;
+        });
+
+        Ok(WsSignaling {
+            sender: connect_tx,
+            receiver: Arc::new(Mutex::new(msg_rx)),
+        })
+    }
 }
 
 impl Signaling for WsSignaling {
     fn send(&self, msg: String) {
+        let sender = self.sender.clone();
         tokio::spawn(async move {
-            self.write
-                .lock()
-                .await
-                .send(tungstenite::Message::Text(msg))
-                .await
-                .unwrap();
+            sender.send(msg).await.unwrap();
         });
     }
-    async fn next(&mut self) -> Option<String> {
-        while let Some(msg) = self.read.next().await {
-            match msg {
-                Result::Ok(tungstenite::Message::Text(text)) => {
-                    return Some(text);
-                }
-                Result::Err(e) => {
-                    log::error!("Error with websocket message {}", e.to_string());
-                }
-                _ => {
-                    log::warn!("Websocket message type is not supported ");
-                }
-            }
-        }
-        None
+
+    async fn next(&self) -> Option<String> {
+        // self.receiver.clone();
+        // async move {
+        self.receiver.lock().await.recv().await.unwrap_or(None)
+        // }
     }
 }
+
 pub struct State<S: Signaling> {
     pub api: API,
     pub config: RTCConfiguration,
     pub session_map: SessionMap,
     pub my_name: String,
-    pub signaling: S,
+    pub signaling: Arc<S>,
     pub peer_map: PeerMap,
 }
 
@@ -103,13 +124,13 @@ impl State<WsSignaling> {
     // async fn create_connection(&self) -> Result<()> {
 
     // }
-    async fn create_peer_connection<'a>(
+    pub async fn create_peer_connection<'a>(
         &self,
         target: String,
     ) -> Result<(Arc<RTCPeerConnection>, tokio::sync::mpsc::Receiver<()>)> {
         let peer_connection = Arc::new(self.api.new_peer_connection(self.config.clone()).await?);
 
-        let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let (done_tx, done_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
@@ -130,11 +151,12 @@ impl State<WsSignaling> {
         ));
 
         let my_name = self.my_name.clone();
-        let write_clone = self.write.clone();
+        // let write_clone = self.write.clone();
+        let signaling = self.signaling.clone();
 
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
-            let write_clone = write_clone.clone();
-
+            // let write_clone = write_clone.clone();
+            let signaling = signaling.clone();
             if let Some(candidate) = candidate {
                 let signal_msg = Message {
                     r#type: "candidate".to_string(),
@@ -146,14 +168,8 @@ impl State<WsSignaling> {
                     from: None,
                 };
                 tokio::spawn(async move {
-                    let mut write_guard = write_clone.lock().await;
-
-                    write_guard
-                        .send(tungstenite::Message::Text(
-                            serde_json::to_string(&signal_msg).unwrap(),
-                        ))
-                        .await
-                        .unwrap();
+                    // let mut write_guard = .lock().await;
+                    signaling.send(serde_json::to_string(&signal_msg).unwrap());
                 });
             }
 
@@ -163,58 +179,8 @@ impl State<WsSignaling> {
         Ok((peer_connection, done_rx))
     }
 
-    pub async fn create_offer(&self, target: String, session: String) -> Result<()> {
-        let (peer_connection, mut done_rx) = self.create_peer_connection(target.clone()).await?;
-
-        let local_desc = peer_connection.create_offer(None).await?;
-        peer_connection
-            .set_local_description(local_desc.clone())
-            .await?;
-
-        // let local_desc = peer_connection
-        //     .local_description()
-        //     .await
-        //     .ok_or(anyhow!("Can't get local description"))?;
-
-        let signal_msg = Message {
-            r#type: "offer".to_string(),
-            name: Some(self.my_name.clone().to_string()),
-            target: Some(target.clone()),
-            data: Some(serde_json::to_string(&local_desc)?),
-            session: Some(session),
-            peer_type: None,
-            from: None,
-        };
-
-        {
-            let user_name = target.clone();
-            let mut map = self.peer_map.lock().await;
-            if let Some(_) = map.get(&user_name) {
-                log::error!("Peer exists");
-                // Session exists
-            } else {
-                map.insert(
-                    user_name,
-                    Peer {
-                        peer_connection: peer_connection.clone(),
-                    },
-                );
-            }
-        }
-
-        self.write
-            .lock()
-            .await
-            .send(tungstenite::Message::Text(serde_json::to_string(
-                &signal_msg,
-            )?))
-            .await?;
-
-        Ok(())
-    }
-
     async fn handle_answer(&self, message: Message) -> Result<()> {
-        let mut map = self.peer_map.lock().await;
+        let map = self.peer_map.lock().await;
         let Some(peer) = map.get(&message.from.clone().ok_or(anyhow!("no from"))?) else {
             return Err(anyhow!("peer not found"));
         };
@@ -278,13 +244,7 @@ impl State<WsSignaling> {
                 peer_type: None,
                 from: None,
             };
-            self.write
-                .lock()
-                .await
-                .send(tungstenite::Message::Text(serde_json::to_string(
-                    &signal_msg,
-                )?))
-                .await?;
+            self.signaling.send(serde_json::to_string(&signal_msg)?);
         }
         {
             let user_name = message.clone().from.clone().unwrap();
@@ -310,10 +270,12 @@ impl State<WsSignaling> {
     }
 
     pub async fn new(my_name: String, peer_type: String, url: String) -> Result<Self> {
+        let signaling = Arc::new(WsSignaling::new(url.as_str()).await?);
+
         // Connect to the signaling server
-        let (ws_stream, _) = connect_async(url).await?;
-        let (write, read) = ws_stream.split();
-        let write = Arc::new(Mutex::new(write));
+        // let (ws_stream, _) = connect_async(url).await?;
+        // let (write, read) = ws_stream.split();
+        // let write = Arc::new(Mutex::new(write));
 
         let register_msg = Message {
             r#type: "register".to_string(),
@@ -324,13 +286,7 @@ impl State<WsSignaling> {
             data: None,
             from: None,
         };
-        write
-            .lock()
-            .await
-            .send(tungstenite::Message::Text(serde_json::to_string(
-                &register_msg,
-            )?))
-            .await?;
+        signaling.send(serde_json::to_string(&register_msg)?);
 
         // Everything below is the WebRTC-rs API! Thanks for using it ❤️.
 
@@ -367,10 +323,6 @@ impl State<WsSignaling> {
         let session_map: SessionMap = Arc::new(std::sync::Mutex::new(HashMap::default()));
         let peer_map: PeerMap = Arc::new(Mutex::new(HashMap::default()));
 
-        let signaling = WsSignaling {
-            read,
-            write
-        };
         Ok(Self {
             api,
             config,
@@ -411,22 +363,12 @@ impl State<WsSignaling> {
 }
 
 pub async fn connect(my_name: String, peer_type: String, url: String) -> Result<()> {
-    let mut state = State::new(my_name, peer_type, url).await?;
+    let state = State::new(my_name, peer_type, url).await?;
     // Handle incoming messages
     // let write_clone = write.clone();
-    while let Some(msg) = state.read.next().await {
-        match msg {
-            Result::Ok(tungstenite::Message::Text(text)) => {
-                if let Err(e) = state.handle_ws_message(text).await {
-                    log::error!("Error while handling websocket message {}", e.to_string());
-                }
-            }
-            Result::Err(e) => {
-                log::error!("Error with websocket message {}", e.to_string());
-            }
-            _ => {
-                log::warn!("Websocket message type is not supported ");
-            }
+    while let Some(msg) = state.signaling.next().await {
+        if let Err(e) = state.handle_ws_message(msg).await {
+            log::error!("Error while handling ws message: {}", e.to_string())
         }
     }
 

@@ -5,14 +5,15 @@ use anyhow::{Ok, Result};
 use bytes::Bytes;
 use clap::Parser;
 use env_logger::Env;
-use futures_util::StreamExt;
+use peer::Peer;
 use rand::distributions::{Alphanumeric, DistString};
-use signal::State;
+use signal::{Message, Signaling, State};
 use tokio::{
-    io::{self, AsyncReadExt},
+    io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::mpsc,
 };
-use tokio_tungstenite::tungstenite;
+use webrtc::data_channel::data_channel_message::DataChannelMessage;
 
 pub mod peer;
 pub mod port;
@@ -21,7 +22,7 @@ pub mod signal;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-struct Cli {
+pub struct Cli {
     name: Option<String>,
     url: Option<String>,
 
@@ -40,7 +41,7 @@ pub async fn start_client(cli: Cli) -> Result<()> {
 
     log::info!("TCP server listening on {}", addr);
 
-    while let io::Result::Ok((tcp_stream, addr)) = listener.accept().await {
+    while let io::Result::Ok((tcp_stream, _)) = listener.accept().await {
         let cli = cli.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_client(cli, tcp_stream).await {
@@ -48,134 +49,172 @@ pub async fn start_client(cli: Cli) -> Result<()> {
             }
         });
     }
-    // tokio::select! {
 
-
-    // };
-    // while let Some(msg) = state.read.next().await {
-
-    // }
-    // });
-    // Shared list of connected clients
-    // let clients = Arc::new(Mutex::new(Vec::new()));
-
-    // Task to read from rx and write to all connected clients
-    // let clients_for_rx = clients.clone();
-    // let rx_task = tokio::spawn(async move {
-    //     while let Some(msg) = rx.recv().await {
-    //         let clients = clients_for_rx.lock().unwrap().clone();
-    //         for mut client in clients {
-    //             let msg = msg.clone();
-    //             tokio::spawn(async move {
-    //                 if let Err(e) = client.write_all(&msg).await {
-    //                     log::error!("Failed to write to TCP client: {}", e);
-    //                 }
-    //             });
-    //         }
-    //     }
-    // });
-
-    // loop {
-    //     match listener.accept().await {
-    //         io::Result::Ok((tcp_stream, addr)) => {
-
-    //         }
-    //         Err(e) => {}
-    //     }
-    //     // Ok((tcp_stream, addr)) = listener.accept() => {
-    //     //     log::info!("New TCP client connected: {}", addr);
-
-    //     //     let tx_clone = tx.clone();
-    //     //     let clients_clone = clients.clone();
-
-    //     //     // Add the new client to the list
-    //     //     {
-    //     //         let mut clients_lock = clients_clone.lock().unwrap();
-    //     //         clients_lock.push(tcp_stream);
-    //     //     }
-
-    //     //     // Handle the client in a separate task
-    //     //     tokio::spawn(async move {
-    //     //         handle_client(tcp_stream, tx_clone, clients_clone).await;
-    //     //     });
-    //     // },
-    // }
-
-    // Clean up
     log::info!("Shutting down TCP server");
-    // let _ = rx_task.await;
     Ok(())
 }
 
-async fn handle_client(
-    cli: Arc<Cli>,
-    mut tcp_stream: TcpStream,
-    // tx: broadcast::Sender<Bytes>,
-    // clients: Arc<Mutex<Vec<TcpStream>>>,
-) -> Result<()> {
+async fn handle_client(cli: Arc<Cli>, tcp_stream: TcpStream) -> Result<()> {
+    log::info!("new connection");
+    let name = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+    let session = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+    log::info!("Staring with {}", &name);
 
+    let name = cli.name.clone().unwrap_or(name.clone());
+    let url = cli
+        .url
+        .clone()
+        .unwrap_or("wss://websh.amogos.pro/signaling".into());
 
-    // let name = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
-    // let session = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
-    // log::info!("Staring with {}", &name);
+    let state = State::new(name.clone(), "client".to_string(), url).await?;
+    let state = Arc::new(state);
 
-    // let name = cli.name.clone().unwrap_or(name.clone());
-    // let url = cli
-    //     .url
-    //     .clone()
-    //     .unwrap_or("wss://websh.amogos.pro/signaling".into());
-
-    // let mut state = State::new(name, "client".to_string(), url).await?;
-
-    // tokio::spawn(async move {
-    //     while let Some(msg) = state.read.next().await {
-    //         match msg {
-    //             Result::Ok(tungstenite::Message::Text(text)) => {
-    //                 if let Err(e) = state.handle_ws_message(text).await {
-    //                     log::error!("Error while handling websocket message {}", e.to_string());
-    //                 }
-    //             }
-    //             Result::Err(e) => {
-    //                 log::error!("Error with websocket message {}", e.to_string());
-    //             }
-    //             _ => {
-    //                 log::warn!("Websocket message type is not supported ");
-    //             }
-    //         }
-    //     }
-    // });
-    // state.create_offer("server1".into(), session).await?;
-
-    // tokio::spawn(async move {
-    //     log::info!("Starting app");
-    //     if let Err(e) = signal::connect(name, "client".into(), url).await {
-    //         log::error!("Error while running app: {}", e.to_string());
-    //     };
-    // });
-
-    let mut buf = [0u8; 1024];
-
-    loop {
-        let n = match tcp_stream.read(&mut buf).await {
-            io::Result::Ok(0) => {
-                // Client disconnected
-                log::info!("Client disconnected");
-                break;
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        while let Some(msg) = state_clone.signaling.next().await {
+            if let Err(e) = state_clone.handle_ws_message(msg).await {
+                log::error!("Error while handling ws message: {}", e.to_string())
             }
-            io::Result::Ok(n) => n,
-            Err(e) => {
-                log::error!("Failed to read from client: {}", e);
-                break;
-            }
-        };
+        }
+        Box::pin(async move {})
+    });
+    let target: String = "server1".into();
 
-        let msg = Bytes::copy_from_slice(&buf[..n]);
+    let (peer_connection, _done_rx) = state.create_peer_connection(target.clone()).await?;
 
-        // Broadcast the message to other clients
-        // if let Err(e) = tx.send(msg) {
-        //     log::error!("Failed to send message to clients: {}", e);
-        // }
+    let d = peer_connection.create_data_channel("port", None).await?;
+
+    {
+        let user_name = target.clone();
+        let mut map = state.peer_map.lock().await;
+        if let Some(_) = map.get(&user_name) {
+            log::error!("Peer exists");
+            // Session exists
+        } else {
+            map.insert(
+                user_name,
+                Peer {
+                    peer_connection: peer_connection.clone(),
+                },
+            );
+        }
     }
+
+    let peer_connection2 = peer_connection.clone();
+    let name2 = name.clone();
+    let target2 = target.clone();
+    let session = session.clone();
+    let signaling2 = state.signaling.clone();
+    peer_connection.on_negotiation_needed(Box::new(move || {
+        let peer_connection2 = peer_connection2.clone();
+
+        let name = name2.clone();
+        let target = target2.clone();
+        let session = session.clone();
+        let signaling = signaling2.clone();
+
+        Box::pin(async move {
+            let local_desc = peer_connection2.create_offer(None).await.unwrap();
+            peer_connection2
+                .set_local_description(local_desc.clone())
+                .await
+                .unwrap();
+
+            let signal_msg = Message {
+                r#type: "offer".to_string(),
+                name: Some(name.clone().to_string()),
+                target: Some(target.clone()),
+                data: Some(serde_json::to_string(&local_desc).unwrap()),
+                session: Some(session),
+                peer_type: None,
+                from: None,
+            };
+
+            signaling.send(serde_json::to_string(&signal_msg).unwrap());
+        })
+    }));
+
+    let signal_msg = Message {
+        r#type: "connect".to_string(),
+        name: None,
+        target: Some(target.clone()),
+        data: None,
+        session: None,
+        peer_type: None,
+        from: None,
+    };
+
+    state
+        .signaling
+        .send(serde_json::to_string(&signal_msg).unwrap());
+
+    let (to_pty_tx, mut to_pty_rx) = mpsc::channel::<Bytes>(100);
+
+    let (done_tx, mut done_rx) = mpsc::channel::<()>(1);
+
+    d.on_message(Box::new(move |msg: DataChannelMessage| {
+        let ptx_clone = to_pty_tx.clone();
+
+        Box::pin(async move {
+            // Send the message to the PTY task asynchronously
+            if let Err(e) = ptx_clone.send(msg.data).await {
+                log::error!("Failed to send message to PTY: {}", e);
+            }
+        })
+    }));
+
+    let d2 = d.clone();
+
+    d.on_open(Box::new(move || {
+        let d_clone = Arc::clone(&d2); // Clone the Arc to use in the async block
+        Box::pin(async move {
+            let (mut tcp_reader, mut tcp_writer) = tcp_stream.into_split();
+
+            let tcp_to_ws = async {
+                let mut buffer = [0u8; 1024];
+                loop {
+                    match tcp_reader.read(&mut buffer).await {
+                        Result::Ok(0) => break,
+                        Result::Ok(n) => {
+                            if let Err(e) =
+                                d_clone.send(&Bytes::copy_from_slice(&buffer[..n])).await
+                            {
+                                log::error!("WebSocket send error: {}", e);
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("TCP read error: {}", e);
+                            break;
+                        }
+                    }
+                }
+                log::info!("TCP client disconnected");
+            };
+
+            let ws_to_tcp = async {
+                while let Some(msg) = to_pty_rx.recv().await {
+                    if let Err(e) = tcp_writer.write_all(&msg).await {
+                        log::error!("TCP write error: {}", e);
+                        break;
+                    }
+                }
+                tcp_writer.shutdown().await.ok();
+                log::info!("WebSocket connection closed");
+            };
+
+            tokio::select! {
+                _ = tcp_to_ws => (),
+                _ = ws_to_tcp => (),
+            }
+            done_tx.send(()).await.unwrap();
+        })
+    }));
+
+    done_rx.recv().await;
+
+    log::info!("connection end");
+
     Ok(())
 }
 
@@ -184,7 +223,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 
-    start_client(cli).await;
+    if let Err(e) = start_client(cli).await {
+        log::error!("Error while handling {}", e.to_string())
+    }
 
     Ok(())
 }

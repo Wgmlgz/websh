@@ -1,3 +1,5 @@
+use crate::peer::{on_data_channel, Peer, PeerMap};
+use crate::recording::add_video;
 use crate::shell::SessionMap;
 use anyhow::{anyhow, Ok, Result};
 use futures_util::{SinkExt, StreamExt};
@@ -5,8 +7,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{self};
 use tokio::sync::Mutex;
+use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite;
 use webrtc::api::interceptor_registry::register_default_interceptors;
@@ -20,9 +24,8 @@ use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::sdp_type::RTCSdpType;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
-
-use crate::peer::{on_data_channel, Peer, PeerMap};
+use webrtc::peer_connection::signaling_state::RTCSignalingState;
+use webrtc::peer_connection::{self, RTCPeerConnection};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Message {
@@ -154,6 +157,7 @@ impl State<WsSignaling> {
         // let write_clone = self.write.clone();
         let signaling = self.signaling.clone();
 
+        let t = target.clone();
         peer_connection.on_ice_candidate(Box::new(move |candidate| {
             // let write_clone = write_clone.clone();
             let signaling = signaling.clone();
@@ -161,7 +165,7 @@ impl State<WsSignaling> {
                 let signal_msg = Message {
                     r#type: "candidate".to_string(),
                     name: Some(my_name.to_string()),
-                    target: Some(target.clone()),
+                    target: Some(t.clone()),
                     data: Some(serde_json::to_string(&candidate.to_json().unwrap()).unwrap()),
                     session: None,
                     peer_type: None,
@@ -174,6 +178,49 @@ impl State<WsSignaling> {
             }
 
             Box::pin(async {})
+        }));
+
+        let s = self.signaling.clone();
+
+        let p = peer_connection.clone();
+        let m = self.my_name.clone();
+        let t = target.clone();
+
+        peer_connection.on_negotiation_needed(Box::new(move || {
+            let s = s.clone();
+            let p = p.clone();
+            let m = m.clone();
+            let t = t.clone();
+
+            Box::pin(async move {
+                // if p.signaling_state() != RTCSignalingState::Stable {
+                //     // We already have a pending offer/answer exchange.
+                //     // Option A: Do nothing and wait until it’s stable again.
+                //     // Option B: Attempt a rollback (advanced usage).
+                //     return;
+                // }
+                dbg!(p.signaling_state());
+                let local_desc = p.create_offer(None).await.unwrap();
+                // if p.signaling_state() != RTCSignalingState::Stable {
+                //     // We already have a pending offer/answer exchange.
+                //     // Option A: Do nothing and wait until it’s stable again.
+                //     // Option B: Attempt a rollback (advanced usage).
+                //     return;
+                // }
+                p.set_local_description(local_desc.clone()).await.unwrap();
+
+                let signal_msg = Message {
+                    r#type: "offer".to_string(),
+                    name: Some(m.clone().to_string()),
+                    target: Some(t.clone()),
+                    data: Some(serde_json::to_string(&local_desc).unwrap()),
+                    session: None,
+                    peer_type: None,
+                    from: None,
+                };
+
+                s.send(serde_json::to_string(&signal_msg).unwrap());
+            })
         }));
 
         Ok((peer_connection, done_rx))
@@ -193,26 +240,59 @@ impl State<WsSignaling> {
         Ok(())
     }
 
-    async fn handle_offer(&self, message: Message) -> Result<()> {
-        // Handle signaling messages from the user
+    async fn init_peer_connection(&self, message: Message) -> Result<()> {
+        {
+            let user_name = message.clone().from.clone().unwrap();
+            let mut map = self.peer_map.lock().await;
+            if let Some(_) = map.get(&user_name) {
+                log::error!("Peer exists");
+                // Session exists
+            } else {
+                // Create a new RTCPeerConnection
+                let session_map = self.session_map.clone();
 
-        // Create a new RTCPeerConnection
+                let message_clone = message.clone();
+                let from = message_clone.clone().from;
+                let (peer_connection, mut done_rx) = self
+                    .create_peer_connection(from.ok_or(anyhow!("no from"))?)
+                    .await?;
+                // Register data channel creation handling
+                peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
+                    if let Err(e) =
+                        on_data_channel(d, message_clone.clone().session, session_map.clone())
+                    {
+                        log::error!("Failed to handle data channel: {}", e.to_string())
+                    }
+                    Box::pin(async {})
+                }));
+                map.insert(
+                    user_name,
+                    Peer {
+                        peer_connection: peer_connection.clone(),
+                    },
+                );
 
-        let session_map = self.session_map.clone();
+                // let _ = peer_connection.create_data_channel("dummy", None).await?;
 
-        let message_clone = message.clone();
-        let from = message_clone.clone().from;
-
-        let (peer_connection, mut done_rx) = self
-            .create_peer_connection(from.ok_or(anyhow!("no from"))?)
-            .await?;
-        // Register data channel creation handling
-        peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-            if let Err(e) = on_data_channel(d, message_clone.clone().session, session_map.clone()) {
-                log::error!("Failed to handle data channel: {}", e.to_string())
+                let p = peer_connection.clone();
+                tokio::spawn(async move {
+                    // sleep(Duration::from_secs(5)).await;
+                    dbg!("pending!!!");
+                    add_video(&p).await.unwrap();
+                });
             }
-            Box::pin(async {})
-        }));
+        }
+
+        Ok(())
+    }
+
+    async fn handle_offer(&self, message: Message) -> Result<()> {
+        self.init_peer_connection(message.clone()).await?;
+        let map = self.peer_map.lock().await;
+        let Some(peer) = map.get(&message.from.clone().ok_or(anyhow!("no from"))?) else {
+            return Err(anyhow!("peer not found"));
+        };
+        let peer_connection = peer.peer_connection.clone();
 
         let data = message.clone().data.ok_or(anyhow!("No data in message"))?;
         let sdp: RTCSessionDescription = serde_json::from_str::<RTCSessionDescription>(&data)?;
@@ -246,26 +326,7 @@ impl State<WsSignaling> {
             };
             self.signaling.send(serde_json::to_string(&signal_msg)?);
         }
-        {
-            let user_name = message.clone().from.clone().unwrap();
-            let mut map = self.peer_map.lock().await;
-            if let Some(_) = map.get(&user_name) {
-                log::error!("Peer exists");
-                // Session exists
-            } else {
-                map.insert(
-                    user_name,
-                    Peer {
-                        peer_connection: peer_connection.clone(),
-                    },
-                );
-            }
-        }
-        tokio::spawn(async move {
-            done_rx.recv().await;
-            log::info!("Received done signal!");
-            peer_connection.close().await.unwrap();
-        });
+
         Ok(())
     }
 

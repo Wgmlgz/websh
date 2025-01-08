@@ -85,6 +85,8 @@ function handleWs(sock: WebSocket) {
             );
             break;
           }
+          case 'offer':
+          case 'answer':
           case 'signal': {
             const session = message.session;
 
@@ -103,7 +105,7 @@ function handleWs(sock: WebSocket) {
             console.log('sending to server');
             connectedPeer.socket.send(
               JSON.stringify({
-                type: 'signal',
+                type: message.type,
                 from: peerName,
                 session,
                 data: message.data,

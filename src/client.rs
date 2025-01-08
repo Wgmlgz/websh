@@ -21,6 +21,7 @@ pub mod peer;
 pub mod port;
 pub mod shell;
 pub mod signal;
+pub mod recording;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

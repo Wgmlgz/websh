@@ -11,13 +11,15 @@
   let terminal: HTMLDivElement;
   let targetServer: string;
   let targetSession: string;
-
+  let video: HTMLVideoElement;
+  let status = writable();
+  let manager: ConnectionManager;
   const term = new Terminal();
 
-  const server_url = writable('wss://dev-websh.amogos.pro/signaling');
-  let manager = new ConnectionManager(server_url);
-  let status = manager.status;
+  const server_url = writable('ws://localhost:8002');
   onMount(() => {
+    manager = new ConnectionManager(server_url, video);
+    status = manager.status;
     term.open(terminal);
   });
 
@@ -39,4 +41,5 @@
   <Input bind:value={targetSession} />
   <Button on:click={startSession}>Start Session</Button>
   <div id="logs"></div>
+  <div bind:this={video} />
 </div>

@@ -1,0 +1,16 @@
+[package]
+name = "virtual-display"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+objc = "0.2"
+cocoa = "0.26.0"
+core-graphics = "0.24.0"
+
+[build-dependencies]
+bindgen = "0.71.1"
+
+# [build]
+# # So that build.rs is run automatically
+# build = "build.rs"

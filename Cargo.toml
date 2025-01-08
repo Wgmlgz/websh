@@ -1,3 +1,4 @@
+# workspace = { members = ["virtual-display"] }
 [package]
 name = "websh"
 version = "0.1.0"
@@ -29,7 +30,9 @@ portable-pty = { version = "0.8.1", features = [
 tokio-tungstenite = { version = "0.24.0", features = ["native-tls"] }
 futures-util = "0.3.31"
 clap = { version = "4.5.20", features = ["derive"] }
-
+# virtual-display = { path = "./virtual-display" }
+scap = "0.0.8"
+ffmpeg-next = "7.1"  # or latest
 
 [[bin]]
 name = "server"
@@ -38,3 +41,7 @@ path = "src/server.rs"
 [[bin]]
 name = "client"
 path = "src/client.rs"
+
+[[bin]]
+name = "sus"
+path = "src/sus.rs"

@@ -10,9 +10,10 @@ export class ConnectionManager {
   myName: string;
   status: Writable<string>;
 
-  constructor(public server_url: Writable<string>) {
+  constructor(public server_url: Writable<string>, public remoteVideo: HTMLVideoElement) {
     this.socket = this.setupWebSocket();
     this.pc = new RTCPeerConnection({
+
       iceServers:
         [
           {
@@ -81,10 +82,12 @@ export class ConnectionManager {
       {
         urls: `turn:amogos.pro:3478`, // Adjust the TURN server URL as necessary
         username: credentials.username,
-        credential: credentials.password
+        credential: credentials.password,
       }
     ];
-    this.pc.setConfiguration({ iceServers: newIceServers });
+    this.pc.setConfiguration({
+      iceServers: newIceServers,
+    });
     this.status.set('TURN credentials updated');
   }
 
@@ -104,14 +107,49 @@ export class ConnectionManager {
       ordered: true
     };
 
-    const sendChannel = this.pc.createDataChannel('foo', dataChannelOptions);
+    const sendChannel = this.pc.createDataChannel('web_shell', dataChannelOptions);
+
     sendChannel.onclose = () => this.status.set('sendChannel has closed');
     sendChannel.onopen = () => this.status.set('sendChannel has opened');
 
+    const enc = new TextDecoder("utf-8");
+
     sendChannel.onmessage = async (e) => {
       const data = e.data;
-      term.write(data);
+      const res = JSON.parse(enc.decode(data))
+      console.log(res);
+
+      // const output = JSON.parse(data).
+      term.write(res.output);
     };
+
+
+    // this.pc.ontrack = (event) => {
+    //   console.log('track added', event);
+
+    //   const remoteStream = new MediaStream();
+    //   event.streams[0].getTracks().forEach(track => {
+    //     remoteStream.addTrack(track);
+    //   });
+    //   this.remoteVideo.srcObject = remoteStream;
+    // }
+
+    this.pc.ontrack = (event) => {
+      console.log('track added', event);
+
+      const el = document.createElement(event.track.kind) as HTMLVideoElement
+      el.srcObject = event.streams[0]
+      el.autoplay = true
+      el.controls = true
+
+      event.track.onmute = function (event) {
+        console.log(event);
+        // el.parentNode?.removeChild(el);
+      }
+
+      this.remoteVideo.appendChild(el)
+    }
+
 
     this.pc.oniceconnectionstatechange = () => this.status.set(this.pc.iceConnectionState);
     this.pc.onconnectionstatechange = () => this.status.set(this.pc.connectionState);
@@ -119,11 +157,14 @@ export class ConnectionManager {
     this.pc.onicegatheringstatechange = () => this.status.set(this.pc.signalingState);
 
     this.pc.onnegotiationneeded = async () => {
-      const offer = await this.pc.createOffer();
+      const offer = await this.pc.createOffer({
+        // offerToReceiveAudio: true,
+        // offerToReceiveVideo: true,
+      });
       await this.pc.setLocalDescription(offer);
       this.socket.send(
         JSON.stringify({
-          type: 'signal',
+          type: 'offer',
           target: targetServer,
           session: targetSession,
           data: JSON.stringify(this.pc.localDescription)
@@ -132,7 +173,7 @@ export class ConnectionManager {
     };
 
     term.onData((data: string) => {
-      sendChannel.send(data);
+      sendChannel.send(JSON.stringify({ input: data }));
     });
 
     this.socket.onmessage = async (event) => {
@@ -145,12 +186,37 @@ export class ConnectionManager {
         case 'connection_request':
           // Users don't handle connection requests
           break;
-        case 'signal': {
+        case 'offer': {
+          console.log('amogus');
+          const data = JSON.parse(message.data);
+          if (data.type === 'offer') {
+            await this.pc.setRemoteDescription(new RTCSessionDescription(data));
+          }
+          console.log('amogus2');
+
+          const answer = await this.pc.createAnswer({
+            // offerToReceiveAudio: true,
+            // offerToReceiveVideo: true,
+          });
+          await this.pc.setLocalDescription(answer);
+          console.log('amogus3');
+
+          this.socket.send(
+            JSON.stringify({
+              type: 'answer',
+              target: targetServer,
+              session: targetSession,
+              data: JSON.stringify(answer)
+            })
+          );
+          console.log('amogus5');
+
+          break;
+        }
+        case 'answer': {
           const data = JSON.parse(message.data);
           if (data.type === 'answer') {
             await this.pc.setRemoteDescription(new RTCSessionDescription(data));
-          } else if (data.candidate) {
-            await this.pc.addIceCandidate(new RTCIceCandidate(data));
           }
           break;
         }

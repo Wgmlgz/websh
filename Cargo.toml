@@ -30,9 +30,11 @@ portable-pty = { version = "0.8.1", features = [
 tokio-tungstenite = { version = "0.24.0", features = ["native-tls"] }
 futures-util = "0.3.31"
 clap = { version = "4.5.20", features = ["derive"] }
+scrap = "0.5.0"
+vpx-encode = "0.6.2"
+env-libvpx-sys = { version = "5.1.3", features = ["generate"] }
+ffmpeg-next = "7.1.0"
 # virtual-display = { path = "./virtual-display" }
-scap = "0.0.8"
-ffmpeg-next = "7.1"  # or latest
 
 [[bin]]
 name = "server"

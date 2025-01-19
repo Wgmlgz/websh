@@ -7,6 +7,7 @@ pub mod peer;
 pub mod port;
 pub mod shell;
 pub mod signal;
+pub mod convert;
 pub mod recording;
 
 #[derive(Parser)]

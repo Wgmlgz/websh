@@ -9,8 +9,8 @@
   import { get, writable } from 'svelte/store';
 
   let terminal: HTMLDivElement;
-  let targetServer: string;
-  let targetSession: string;
+  let targetServer: string = 'server1';
+  let targetSession: string = '1';
   let video: HTMLVideoElement;
   let status = writable();
   let manager: ConnectionManager;

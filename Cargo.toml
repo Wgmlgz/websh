@@ -9,13 +9,19 @@ edition = "2021"
 [dependencies]
 webrtc = { git = "https://github.com/webrtc-rs/webrtc.git" }
 
-tokio = { version = "1.32.0", features = ["full"] }
+tokio = { version = "1.32.0", features = [
+  "full",
+] }
 env_logger = "0.11.3"
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { version = "0.7", features = [
+  "codec",
+] }
 anyhow = "1"
 chrono = "0.4.28"
 log = "0.4"
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = [
+  "derive",
+] }
 serde_json = "1"
 bytes = "1"
 lazy_static = "1"
@@ -27,13 +33,24 @@ portable-pty = { version = "0.8.1", features = [
   "serde_derive",
   "serde_support",
 ] }
-tokio-tungstenite = { version = "0.24.0", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.24.0", features = [
+  "native-tls",
+] }
 futures-util = "0.3.31"
-clap = { version = "4.5.20", features = ["derive"] }
-scrap = "0.5.0"
+clap = { version = "4.5.20", features = [
+  "derive",
+] }
+rustdesk = { path = "./rustdesk" }
+scrap = { path = "./rustdesk/libs/scrap" }
 vpx-encode = "0.6.2"
-env-libvpx-sys = { version = "5.1.3", features = ["generate"] }
-ffmpeg-next = "7.1.0"
+env-libvpx-sys = { version = "5.1.3", features = [
+  "generate",
+] }
+# ffmpeg-next = "7.1.0"
+gstreamer = "0.23.5"
+gstreamer-app = "0.23.5"
+gstreamer-webrtc = "0.23.5"
+image = "0.25.5"
 # virtual-display = { path = "./virtual-display" }
 
 [[bin]]
@@ -47,3 +64,8 @@ path = "src/client.rs"
 [[bin]]
 name = "sus"
 path = "src/sus.rs"
+
+
+[env]
+VCPKG_ROOT = "C:\\users\\wgmlg\\websh\\vcpkg"
+LIBCLANG_PATH = "C:\\clang+llvm-20.1.0-rc2-x86_64-pc-windows-msvc\\lib"

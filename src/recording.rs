@@ -1,4 +1,4 @@
-use std::fs::File;
+// use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::net::SocketAddr;
 use std::path::Path;
@@ -9,8 +9,9 @@ use std::time::{self, Instant};
 use anyhow::anyhow;
 use anyhow::Result;
 use bytes::Bytes;
-use ffmpeg_next::threading::Config;
-use ffmpeg_next::util::format;
+// use ffmpeg_next::threading::Config;
+// use ffmpeg_next::util::format;
+use std::process::{Command, Stdio};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::Duration;
@@ -31,16 +32,35 @@ use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSampl
 use webrtc::track::track_local::TrackLocal;
 use webrtc::Error;
 
-use ffmpeg::codec::packet::Packet;
-use ffmpeg::codec::{self, Context as CodecContext};
-use ffmpeg::format::Pixel;
-use ffmpeg::software::scaling::{flag::Flags, Context as SwsContext};
-use ffmpeg::util::frame::video::Video as FFrame;
-use ffmpeg_next::codec::{Id, Parameters};
-use ffmpeg_next::encoder::{Encoder, Video};
-use ffmpeg_next::{self as ffmpeg, Dictionary, Rational};
-
+// use rustdesk::scrap as scrap;
+// use ffmpeg::codec::packet::Packet;
+// use ffmpeg::codec::{self, Context as CodecContext};
+// use ffmpeg::format::Pixel;
+// use ffmpeg::software::scaling::{flag::Flags, Context as SwsContext};
+// use ffmpeg::util::frame::video::Video as FFrame;
+// use ffmpeg_next::codec::{Id, Parameters};
+// use ffmpeg_next::encoder::{Encoder, Video};
+// use ffmpeg_next::{self as ffmpeg, Dictionary, Rational};
+// use scrap::codec::{EncoderApi, EncoderCfg};
 use tokio::runtime::Runtime;
+
+use std::fs::{File, OpenOptions};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+// use std::sync::Arc;
+// use std::time::{
+//     Duration,
+//     // Instant
+// };
+use std::{io, thread};
+
+// use docopt::Docopt;
+use scrap::codec::{EncoderApi, EncoderCfg};
+// use webm::mux;
+// use webm::mux::Track;
+
+use scrap::vpxcodec as vpx_encode;
+use scrap::{Capturer, Display, TraitCapturer, STRIDE_ALIGN};
 
 // Add a single video track
 pub async fn add_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
@@ -67,7 +87,7 @@ pub async fn add_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
         RTCRtpCodecCapability {
             mime_type:
             //  if is_vp9 {
-            //     MIME_TYPE_VP9.to_owned()
+                // MIME_TYPE_VP9.to_owned(),
             // } else {
                 MIME_TYPE_VP8.to_owned(),
             // },
@@ -118,16 +138,44 @@ async fn remove_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
     println!("Video track has been removed");
     Ok(())
 }
+#[derive(Debug)]
+struct CapturedFrame {
+    data: Bytes,
+    timestamp: Instant,
+}
 
-pub fn record(tx: Sender<Bytes>) -> Result<()> {
-    use scrap::{Capturer, Display};
+pub fn record(tx: mpsc::Sender<CapturedFrame>) -> Result<()> {
     use std::io::ErrorKind::WouldBlock;
-    use std::io::Write;
-    use std::process::{Command, Stdio};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    let d = Display::primary().unwrap();
-    let (w, h) = (d.width(), d.height());
+    let mut displays = scrap::Display::all().unwrap();
+    let display = displays.remove(0);
+    let (width, height) = (display.width() as u32, display.height() as u32);
 
+    let vpx_codec = scrap::vpxcodec::VpxVideoCodecId::VP8;
+
+    // Setup the encoder (omitted error handling, see your code).
+    let quality = 1.0;
+    let mut vpx = scrap::vpxcodec::VpxEncoder::new(
+        scrap::codec::EncoderCfg::VPX(scrap::vpxcodec::VpxEncoderConfig {
+            width,
+            height,
+            quality,
+            codec: vpx_codec,
+            keyframe_interval: None,
+        }),
+        false,
+    )
+    .unwrap();
+
+    let mut capturer = scrap::Capturer::new(display).unwrap();
+
+    let start = Instant::now();
+    let stop = Arc::new(AtomicBool::new(false));
+    let mut yuv = Vec::new();
+    let mut mid_data = Vec::new();
+    use scrap::Frame;
+    use scrap::TraitPixelBuffer;
     // let child = Command::new("ffplay")
     //     .args(&[
     //         "-f",
@@ -135,7 +183,7 @@ pub fn record(tx: Sender<Bytes>) -> Result<()> {
     //         "-pixel_format",
     //         "bgr0",
     //         "-video_size",
-    //         &format!("{}x{}", w, h),
+    //         &format!("{}x{}", width, height),
     //         "-framerate",
     //         "60",
     //         "-",
@@ -143,155 +191,89 @@ pub fn record(tx: Sender<Bytes>) -> Result<()> {
     //     .stdin(Stdio::piped())
     //     .spawn()
     //     .expect("This example requires ffplay.");
-
-    let mut capturer = Capturer::new(d).unwrap();
     // let mut out = child.stdin.unwrap();
 
-    // let mut dest = Vec::new();
-
-    let start = Instant::now();
-
-    let mut scaler = init_scaler(w as u32, h as u32).expect("Failed to init scaler");
-    let mut encoder =
-        init_vp8_encoder(w as u32, h as u32, 500000).expect("Failed to initialize VP8 encoder");
-
-    loop {
-        let now = Instant::now();
-        let time = now - start;
-
-        match capturer.frame() {
+    while !stop.load(Ordering::Acquire) {
+        match capturer.frame(Duration::from_millis(0)) {
             Ok(frame) => {
-                let ms = time.as_secs() * 1000 + time.subsec_millis() as u64;
-                let mut yuv_frame = FFrame::new(Pixel::YUV420P, (w / 2) as u32, (h / 2) as u32);
-                let mut bgra_frame = FFrame::new(Pixel::BGRA, w as u32, h as u32);
+                // Write the frame, removing end-of-row padding.
+                // {
+                //     let Frame::PixelBuffer(frame) = frame else {
+                //         continue;
+                //     };
+                //     let stride = frame.stride()[0];
+                //     let rowlen: usize = (4 * width).try_into().unwrap();
+                //     for row in frame.data().chunks(stride) {
+                //         let row = &row[..rowlen];
+                //         out.write_all(row).unwrap();
+                //     }
+                // }
 
-                {
-                    let data_0 = bgra_frame.data_mut(0); // Plane #0 for BGRA
-                                                         // let stride_0 = bgra_frame.stride(0);     // Typically width * 4 for BGRA
+                let now = Instant::now();
+                let elapsed_ms = (now - start).as_millis() as i64;
 
-                    // Copy from your raw BGRA bytes into the frame’s plane
-                    // Make sure the input data size fits within data_0
-                    data_0[..frame.len()].copy_from_slice(&frame);
-                };
-                // dbg!(yuv_frame.width(), yuv_frame.height());
-                // 3) Convert BGRA -> YUV420P using swscale
-                scaler.run(&bgra_frame, &mut yuv_frame)?;
+                // Convert BGRA -> YUV, then encode
+                frame.to(vpx.yuvfmt(), &mut yuv, &mut mid_data).unwrap();
+                let encoded_frames = vpx.encode(elapsed_ms, &yuv, scrap::STRIDE_ALIGN).unwrap();
 
-                encoder.send_frame(&yuv_frame)?;
+                for enc_frame in encoded_frames {
+                    let frame_data = Bytes::copy_from_slice(enc_frame.data);
 
-                loop {
-                    let mut packet = Packet::empty();
-                    match encoder.receive_packet(&mut packet) {
-                        Ok(_) => {
-                            let v = Vec::from(packet.data().unwrap());
-                            tx.blocking_send(Bytes::from(v)).unwrap();
-                        }
-                        Err(e) if e == ffmpeg::Error::Eof => {
-                            break;
-                        }
-                        Err(e) => {
-                            break;
-                            return Err(anyhow::anyhow!("Error receiving packet: {:?}", e));
-                        }
-                    }
+                    // Send the encoded data + the capture timestamp
+                    // (we’ll use `now` to measure the frame duration in the writer).
+                    tx.blocking_send(CapturedFrame {
+                        data: frame_data,
+                        timestamp: now,
+                    })
+                    .unwrap();
                 }
             }
             Err(ref e) if e.kind() == WouldBlock => {
-                // Wait for the frame.
+                // Just skip if no frame is ready yet
             }
-            Err(_) => {
-                // We're done here.
+            Err(e) => {
+                eprintln!("Capturer error: {:?}", e);
                 break;
             }
         }
     }
-    return Ok(());
-}
 
-// Read a video file from disk and write it to a webrtc.Track
-// When the video has been completely read this exits without error
-async fn write_video_to_track2(t: Arc<TrackLocalStaticSample>) -> Result<()> {
-    let (tx, mut rx) = mpsc::channel::<Bytes>(100);
-
-    tokio::task::spawn_blocking(|| {
-        record(tx).unwrap();
-    });
-    loop {
-        let frame = rx.recv().await;
-        let Some(frame) = frame else {
-            break;
-        };
-
-        t.write_sample(&Sample {
-            // data: frame.freeze(),
-            data: frame,
-            duration: Duration::from_millis(1),
-            ..Default::default()
-        })
-        .await?;
-    }
     Ok(())
 }
 
-fn init_scaler(width: u32, height: u32) -> Result<SwsContext> {
-    dbg!(width, height);
-    let scaler = SwsContext::get(
-        Pixel::BGRA, // source pixel format
-        width,
-        height,
-        Pixel::YUV420P, // destination pixel format
-        width / 2,
-        height / 2,
-        Flags::BILINEAR, // or use FAST_BILINEAR, etc.
-    )?;
-    Ok(scaler)
-}
+pub async fn write_video_to_track2(track: Arc<TrackLocalStaticSample>) -> Result<()> {
+    // Our channel will carry frames plus the timestamp
+    let (tx, mut rx) = mpsc::channel::<CapturedFrame>(1);
 
-fn init_vp8_encoder(width: u32, height: u32, bitrate: usize) -> Result<Video> {
-    // Find the VP8 codec
-    let codec = ffmpeg::encoder::find(Id::VP8).ok_or_else(|| anyhow!("No H.264 encoder found"))?;
-
-    let context = CodecContext::new_with_codec(codec);
-    let mut video = context.encoder().video()?; // Temporarily borrow mut
-    dbg!("a");
-    video.set_width(((width / 2) as i32).try_into().unwrap());
-    video.set_height(((height / 2) as i32).try_into().unwrap());
-    video.set_format(Pixel::YUV420P);
-    video.set_time_base(Rational(1, 120));
-    video.set_bit_rate(100000000);
-    video.set_threading(Config {
-        kind: codec::threading::Type::Frame,
-        count: 0,
+    // Spawn blocking thread that reads from display
+    tokio::task::spawn_blocking(|| {
+        // If recording fails, you might want to handle that error more gracefully
+        if let Err(e) = record(tx) {
+            eprintln!("record() error: {:?}", e);
+        }
     });
-    // video.set_max_bit_rate(0);
-    // video.set_quality(60);
-    // video.set_global_quality(60);
-    let mut dict = Dictionary::new();
-    // dict.set("crf", "60");       // Properly formatted bitrate
-    // dict.set("bitrate", "10M");       // Properly formatted bitrate
-    // dict.set("-bitrate", "10M");       // Properly formatted bitrate
-    // dict.set("-b:v", "10M");       // Properly formatted bitrate
-    // dict.set("crf", "10");                         // Highest quality / lossless
 
-    // video.set_parameters(dict);
-    // video.set_global_quality(0);
-    // video.set_quality(0);
-    // video.set_parameters("crf", "0")?;   // Set CRF to 0 for highest quality (lossless)
-    // video.set_option("b:v", &format!("{}", bitrate))?; // Set desired bitrate
-    // video.set_bit_rate(bitrate);
+    // We will keep track of the previous Instant to measure the real duration
+    let mut last_timestamp = None;
 
-    // Set pixel format expected by VP8 encoder
-    // context.set_format(Pixel::YUV420P);
+    while let Some(frame) = rx.recv().await {
+        let duration = if let Some(prev_ts) = last_timestamp {
+            frame.timestamp.duration_since(prev_ts)
+        } else {
+            // First frame, can treat as zero
+            Duration::from_millis(0)
+        };
+        last_timestamp = Some(frame.timestamp);
 
-    dbg!("b");
+        track
+            .write_sample(&Sample {
+                data: frame.data,
+                duration,
+                ..Default::default()
+            })
+            .await?;
+    }
 
-    dbg!("b");
-    let mut encoder = video.open_as_with(codec, dict)?;
-    dbg!("c");
-
-    // let r = encoder.encoder();
-    // r
-    // };
-    // encoder.set_bit_rate(bitrate);
-    Ok(encoder)
+    Ok(())
 }
+

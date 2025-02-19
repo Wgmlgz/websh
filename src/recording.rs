@@ -7,7 +7,7 @@ use tokio::runtime::Handle;
 use tokio::task;
 use tokio::time::Duration;
 use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_AV1, MIME_TYPE_VP8, MIME_TYPE_VP9};
-
+use anyhow::anyhow;
 use webrtc::media::Sample;
 
 use scrap::codec::{EncoderApi, EncoderCfg};
@@ -17,6 +17,13 @@ use webrtc::peer_connection::RTCPeerConnection;
 use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::TrackLocal;
+
+
+// GStreamer crates
+use gstreamer as gst;
+use gstreamer_app as gst_app;
+use gst::prelude::*;
+
 
 // Add a single video track
 pub async fn add_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
@@ -114,7 +121,7 @@ pub async fn write_video_to_track2(track: Arc<TrackLocalStaticSample>) -> Result
 
     // Spawn a blocking thread to do the capturing:
     task::spawn_blocking(move || {
-        if let Err(e) = capture_loop(track_clone, stop_clone, &handle) {
+        if let Err(e) = capture_loop_gstreamer(track_clone, stop_clone, &handle) {
             eprintln!("Capture loop error: {:?}", e);
         }
     });
@@ -202,5 +209,100 @@ fn capture_loop(
         }
     }
 
+    Ok(())
+}
+
+
+fn capture_loop_gstreamer(
+    track: Arc<TrackLocalStaticSample>,
+    stop: Arc<AtomicBool>,
+    handle: &Handle,
+) -> Result<()> {
+    // Initialize GStreamer
+    gst::init()?;
+
+    // Example pipeline (30 fps capture):
+    // dxgiscreencapturesrc ! video/x-raw,framerate=30/1 ! videoconvert ! vp8enc ! appsink
+    // The appsink is where we'll pull the encoded frames.
+    //
+    // Adjust to your needs (bitrate, other enc parameters, etc.)
+    let pipeline_str = r#"
+        d3d11screencapturesrc
+            ! video/x-raw,framerate=30/1
+            ! videoscale
+            ! video/x-raw,width=[1,1920],height=[1,1080]
+            ! videoconvert
+            ! vp8enc deadline=1 target-bitrate=100000000
+            ! appsink name=appsink emit-signals=true sync=false
+    "#;
+
+    // Build and downcast to a Pipeline
+    let pipeline = gst::parse::launch(pipeline_str)?;
+    let pipeline = pipeline.dynamic_cast::<gst::Pipeline>()
+        .map_err(|_| anyhow!("Failed to cast parsed element to Pipeline"))?;
+
+    // Retrieve the appsink by name
+    let appsink = pipeline
+        .by_name("appsink")
+        .ok_or_else(|| anyhow!("Failed to find appsink in pipeline"))?
+        .dynamic_cast::<gst_app::AppSink>()
+        .map_err(|_| anyhow!("Failed to cast element to AppSink"))?;
+
+    // Start playing
+    pipeline.set_state(gst::State::Playing)?;
+
+    let start_time = Instant::now();
+    let mut last_instant: Option<Instant> = None;
+
+    // Pull encoded samples from the appsink in a loop
+    while !stop.load(Ordering::Acquire) {
+        // This will block until a new sample is ready, or end-of-stream/error
+        match appsink.pull_sample() {
+            Err(e) => {
+                dbg!(e);
+                // The pipeline might have hit EOS or an error
+                break;
+            }
+            Ok(gst_sample) => {
+                // Compute duration between frames for the webrtc::Sample
+                let now = Instant::now();
+                let duration = if let Some(prev) = last_instant {
+                    now.duration_since(prev)
+                } else {
+                    now.duration_since(start_time) // or 0 if you prefer
+                };
+                last_instant = Some(now);
+
+                // Extract the actual encoded buffer
+                let buffer = gst_sample
+                    .buffer()
+                    .ok_or_else(|| anyhow!("Failed to get buffer from GStreamer sample"))?;
+
+                // Map it as read-only to get the encoded data
+                let map = buffer
+                    .map_readable()
+                    .map_err(|_| anyhow!("Failed to map GStreamer buffer as readable"))?;
+
+                // Copy into a Bytes (webrtc-rs requires Bytes for the sample data)
+                let encoded_bytes = Bytes::copy_from_slice(map.as_slice());
+
+                // Construct a webrtc::Sample
+                let sample = Sample {
+                    data: encoded_bytes,
+                    duration,
+                    ..Default::default()
+                };
+
+                // Because we're in a blocking thread, we must "block_on" the async write.
+                // If you prefer, you can queue these samples and send them on an async pipeline, etc.
+                if let Err(e) = handle.block_on(async { track.write_sample(&sample).await }) {
+                    eprintln!("Failed to write sample to track: {:?}", e);
+                }
+            }
+        }
+    }
+
+    // Cleanup
+    pipeline.set_state(gst::State::Null)?;
     Ok(())
 }

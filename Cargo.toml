@@ -51,6 +51,7 @@ gstreamer = "0.23.5"
 gstreamer-app = "0.23.5"
 gstreamer-webrtc = "0.23.5"
 image = "0.25.5"
+crossbeam = "0.8.4"
 # virtual-display = { path = "./virtual-display" }
 
 [[bin]]

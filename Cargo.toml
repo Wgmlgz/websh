@@ -69,3 +69,6 @@ path = "src/sus.rs"
 [env]
 VCPKG_ROOT = "C:\\users\\wgmlg\\websh\\vcpkg"
 LIBCLANG_PATH = "C:\\clang+llvm-20.1.0-rc2-x86_64-pc-windows-msvc\\lib"
+
+# [profile.release]
+# debug = true

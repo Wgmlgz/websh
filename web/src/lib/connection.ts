@@ -4,13 +4,26 @@ import { toast } from 'svelte-sonner';
 import { get, writable, type Writable } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
 
+export type ConnectionData = {
+  serverUrl: string;
+  targetServer: string;
+  targetSession: string;
+}
+
 export class ConnectionManager {
-  socket: ReconnectingWebSocket;
+  socket: WebSocket;
   pc: RTCPeerConnection;
   myName: string;
   status: Writable<string>;
+  sendChannel: RTCDataChannel | null = null;
 
-  constructor(public server_url: Writable<string>) {
+  constructor(
+    public server_url: string,
+    public targetServer: string,
+    public targetSession: string,
+    public term: Terminal,
+    public onConnected = () => { }
+  ) {
     this.socket = this.setupWebSocket();
     this.pc = new RTCPeerConnection({
       iceServers:
@@ -48,11 +61,7 @@ export class ConnectionManager {
   }
 
   setupWebSocket() {
-    const sus = () => {
-      return get(this.server_url)
-    }
-    const socket = new ReconnectingWebSocket(sus);
-
+    const socket = new WebSocket(this.server_url);
     socket.onopen = () => {
       // Register with unique name
       socket.send(
@@ -63,16 +72,11 @@ export class ConnectionManager {
         })
       );
       this.status.set('Connected to server');
-      // onConnected();
-    };
 
-    this.server_url.subscribe(() => {
-      console.log('sus');
-      socket.reconnect();
-    })
+      this.startSession(this.targetServer, this.targetSession, this.term)
+    };
     return socket;
   }
-
 
   updatePeerConnection(credentials: { username: string; password: string }) {
     // Update the existing PeerConnection iceServers with new TURN credentials
@@ -104,15 +108,59 @@ export class ConnectionManager {
       ordered: true
     };
 
-    const sendChannel = this.pc.createDataChannel('foo', dataChannelOptions);
+    const sendChannel = this.pc.createDataChannel('web_shell', dataChannelOptions);
+    this.sendChannel = sendChannel
+
+    const send = (data: Object) => {
+      const enc = new TextEncoder();
+      const msg = JSON.stringify(data);
+      const res = enc.encode(msg);
+      sendChannel.send(res);
+    }
+
     sendChannel.onclose = () => this.status.set('sendChannel has closed');
-    sendChannel.onopen = () => this.status.set('sendChannel has opened');
+    sendChannel.onopen = () => {
+      this.onConnected()
+      this.status.set('Send Channel has opened')
+
+      setTimeout(() => {
+        const rows = term.rows;
+        const cols = term.cols;
+        send({
+          resize: {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+          }
+        });
+        console.log('resized');
+      }, 5000)
+
+    };
+
+    const dec = new TextDecoder();
 
     sendChannel.onmessage = async (e) => {
       const data = e.data;
-      term.write(data);
+      const decoded = dec.decode(data);
+      const msg = JSON.parse(decoded);
+
+      if (msg.output) {
+        term.write(msg.output);
+      }
     };
 
+    term.onResize(({ cols, rows }) => {
+      send({
+        resize: {
+          rows,
+          cols,
+          pixel_width: 0,
+          pixel_height: 0,
+        }
+      });
+    })
     this.pc.oniceconnectionstatechange = () => this.status.set(this.pc.iceConnectionState);
     this.pc.onconnectionstatechange = () => this.status.set(this.pc.connectionState);
     this.pc.onsignalingstatechange = () => this.status.set(this.pc.signalingState);
@@ -123,7 +171,7 @@ export class ConnectionManager {
       await this.pc.setLocalDescription(offer);
       this.socket.send(
         JSON.stringify({
-          type: 'signal',
+          type: 'offer',
           target: targetServer,
           session: targetSession,
           data: JSON.stringify(this.pc.localDescription)
@@ -132,7 +180,7 @@ export class ConnectionManager {
     };
 
     term.onData((data: string) => {
-      sendChannel.send(data);
+      send({ input: data });
     });
 
     this.socket.onmessage = async (event) => {
@@ -145,13 +193,14 @@ export class ConnectionManager {
         case 'connection_request':
           // Users don't handle connection requests
           break;
-        case 'signal': {
+        case 'answer': {
           const data = JSON.parse(message.data);
           if (data.type === 'answer') {
             await this.pc.setRemoteDescription(new RTCSessionDescription(data));
-          } else if (data.candidate) {
-            await this.pc.addIceCandidate(new RTCIceCandidate(data));
           }
+          // else if (data.candidate) {
+          //   await this.pc.addIceCandidate(new RTCIceCandidate(data));
+          // }
           break;
         }
         case 'candidate': {
@@ -186,5 +235,21 @@ export class ConnectionManager {
         target: targetServer
       })
     );
+  }
+
+  close() {
+    if (this.pc) {
+      if (this.sendChannel) {
+        this.sendChannel.close();
+      }
+      this.pc.close();
+    }
+
+    if (this.socket) {
+      this.socket.close();
+    }
+
+    this.status.set('Disconnected');
+    toast.info('All connections have been closed.');
   }
 }

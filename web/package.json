@@ -25,6 +25,7 @@
     "@types/d3": "^7.4.3",
     "@types/eslint": "^9.6.0",
     "@types/lodash": "^4.17.10",
+    "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "autoprefixer": "^10.4.20",
     "axios": "^1.7.7",

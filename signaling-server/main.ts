@@ -23,6 +23,7 @@ function generateTurnCredentials(usernameBase: string, ttl: number = 86400): { u
   return { username, password };
 }
 
+
 function handleWs(sock: WebSocket) {
   console.log('WebSocket connection established');
 
@@ -38,6 +39,7 @@ function handleWs(sock: WebSocket) {
         const message = JSON.parse(data);
         if (!message) return;
 
+        console.log(message);
         switch (message.type) {
           case 'register': {
             peerName = message.name;
@@ -86,7 +88,8 @@ function handleWs(sock: WebSocket) {
             );
             break;
           }
-          case 'signal': {
+          case 'offer':
+          case 'answer': {
             const session = message.session;
 
             // Forward signaling messages to the connected peer
@@ -104,7 +107,7 @@ function handleWs(sock: WebSocket) {
             console.log('sending to server');
             connectedPeer.socket.send(
               JSON.stringify({
-                type: 'signal',
+                type: message.type,
                 from: peerName,
                 session,
                 data: message.data,

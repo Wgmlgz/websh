@@ -22,6 +22,7 @@ function generateTurnCredentials(usernameBase: string, ttl: number = 86400): { u
   return { username, password };
 }
 
+
 function handleWs(sock: WebSocket) {
   console.log('WebSocket connection established');
 
@@ -37,6 +38,7 @@ function handleWs(sock: WebSocket) {
         const message = JSON.parse(data);
         if (!message) return;
 
+        console.log(message);
         switch (message.type) {
           case 'register': {
             peerName = message.name;

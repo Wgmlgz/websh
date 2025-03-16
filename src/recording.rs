@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use anyhow::Result;
 use bytes::Bytes;
 use std::io::ErrorKind::WouldBlock;
@@ -6,8 +7,9 @@ use std::time::{self, Instant};
 use tokio::runtime::Handle;
 use tokio::task;
 use tokio::time::Duration;
-use webrtc::api::media_engine::{MediaEngine, MIME_TYPE_AV1, MIME_TYPE_VP8, MIME_TYPE_VP9};
-use anyhow::anyhow;
+use webrtc::api::media_engine::{
+    MediaEngine, MIME_TYPE_AV1, MIME_TYPE_H264, MIME_TYPE_VP8, MIME_TYPE_VP9,
+};
 use webrtc::media::Sample;
 
 use scrap::codec::{EncoderApi, EncoderCfg};
@@ -18,12 +20,10 @@ use webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc::track::track_local::TrackLocal;
 
-
 // GStreamer crates
+use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
-use gst::prelude::*;
-
 
 // Add a single video track
 pub async fn add_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
@@ -53,7 +53,7 @@ pub async fn add_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
                 // MIME_TYPE_VP9.to_owned(),
             // } else {
                 // MIME_TYPE_AV1.to_owned(),
-                MIME_TYPE_VP8.to_owned(),
+                MIME_TYPE_H264.to_owned(),
             // },
             ..Default::default()
         },
@@ -212,14 +212,12 @@ fn capture_loop(
     Ok(())
 }
 
-
 fn capture_loop_gstreamer(
     track: Arc<TrackLocalStaticSample>,
     stop: Arc<AtomicBool>,
     handle: &Handle,
 ) -> Result<()> {
     // Initialize GStreamer
-    gst::init()?;
 
     // Example pipeline (30 fps capture):
     // dxgiscreencapturesrc ! video/x-raw,framerate=30/1 ! videoconvert ! vp8enc ! appsink
@@ -227,18 +225,24 @@ fn capture_loop_gstreamer(
     //
     // Adjust to your needs (bitrate, other enc parameters, etc.)
     let pipeline_str = r#"
-        d3d11screencapturesrc
-            ! video/x-raw,framerate=30/1
-            ! videoscale
-            ! video/x-raw,width=[1,1920],height=[1,1080]
-            ! videoconvert
-            ! vp8enc deadline=1 target-bitrate=100000000
-            ! appsink name=appsink emit-signals=true sync=false
+    d3d11screencapturesrc
+        ! video/x-raw,framerate=60/1
+        ! videoscale
+        ! video/x-raw,width=[1,1920],height=[1,1080]
+        ! videoconvert
+        ! nvh264enc
+            preset=p1
+            tune=ultra-low-latency
+            zerolatency=true
+        ! h264parse
+            config-interval=-1 
+        ! appsink name=appsink emit-signals=true sync=false
     "#;
 
     // Build and downcast to a Pipeline
     let pipeline = gst::parse::launch(pipeline_str)?;
-    let pipeline = pipeline.dynamic_cast::<gst::Pipeline>()
+    let pipeline = pipeline
+        .dynamic_cast::<gst::Pipeline>()
         .map_err(|_| anyhow!("Failed to cast parsed element to Pipeline"))?;
 
     // Retrieve the appsink by name

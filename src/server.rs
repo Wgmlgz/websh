@@ -2,13 +2,14 @@ use anyhow::Result;
 
 use clap::Parser;
 use env_logger::Env;
+use gstreamer as gst;
 
+pub mod convert;
 pub mod peer;
 pub mod port;
+pub mod recording;
 pub mod shell;
 pub mod signal;
-pub mod convert;
-pub mod recording;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -25,6 +26,20 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    log::info!("PLSSSSS");
+
+
+    // essentially just mix the goblin syrup with bathsalts
+    std::env::set_var("GST_DEBUG", "3");
+    std::env::set_var(
+        "GST_PLUGIN_PATH",
+        "C:\\Program Files\\gstreamer\\1.0\\msvc_x86_64\\lib\\gstreamer-1.0",
+    );
+    gst::init()?;
+    log::info!("PLSSSSS222");
+    // Ok(())
+    // loop {}
+    log::info!("PLSSSSS3333");
     let cli = Cli::parse();
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 

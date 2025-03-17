@@ -12,7 +12,7 @@ pub use macos_impl::VirtualDisplay;
 mod windows_impl;
 
 #[cfg(target_os = "windows")]
-pub use windows_impl::VirtualDisplay;
+pub use windows_impl::VirtualDisplayManager;
 
 // // Non-macOS stub
 // #[cfg(not(target_os = "macos"))]

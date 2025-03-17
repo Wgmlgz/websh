@@ -606,6 +606,8 @@ dependencies = [
  "core-graphics",
  "driver-ipc",
  "objc",
+ "serde",
+ "tokio",
  "windows 0.60.0",
 ]
 

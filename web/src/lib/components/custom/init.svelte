@@ -3,13 +3,12 @@
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
   import { Label } from '$lib/components/ui/label/index.js';
-  import type { ConnectionData } from '$lib/connection';
-
+  import type { ConnectionData } from '$lib/state';
+  import { v4 as uuidv4 } from 'uuid';
   export let sus: (config: ConnectionData) => void;
 
   let serverUrl = 'wss://dev-websh.amogos.pro/signaling';
   let targetServer = 'server1';
-  let targetSession = '1';
 </script>
 
 <AlertDialog.Root>
@@ -40,7 +39,7 @@
     </div>
     <AlertDialog.Footer>
       <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-      <AlertDialog.Action on:click={() => sus({ serverUrl, targetServer })}>
+      <AlertDialog.Action on:click={() => sus({ id: uuidv4(), serverUrl, targetServer })}>
         Connect!
       </AlertDialog.Action>
     </AlertDialog.Footer>

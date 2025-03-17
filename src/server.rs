@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
             "server".into(),
             cli.url
                 .clone()
-                .unwrap_or("wss://websh.amogos.pro/signaling".into()),
+                .unwrap_or("ws://amogos.pro:8002/signaling".into()),
         )
         .await
         {

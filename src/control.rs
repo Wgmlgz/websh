@@ -30,7 +30,7 @@ pub struct StartVideoMsg {
 
 impl<T> State<T>
 where
-    T: Signaling,
+    T: Signaling + std::marker::Sync + 'static,
 {
     pub async fn handle_control(
         self: Arc<Self>,
@@ -39,6 +39,7 @@ where
         mut rx: mpsc::Receiver<Bytes>, // From clients to server
         mut done_rx: Receiver<()>,
     ) {
+        let manager = self.display_manager.clone();
         // Asynchronously receive messages and write to PTY
         tokio::spawn(async move {
             while let Some(json) = rx.recv().await {
@@ -51,6 +52,9 @@ where
                 match msg {
                     ControlMsg::Empty => todo!(),
                     ControlMsg::StartVideo(start_video_msg) => {
+                        let res = manager
+                            .update_display(0, Some(1920), Some(1080), Some(60))
+                            .await;
                         let p = pc.clone();
                         tokio::spawn(async move {
                             add_video(&p, start_video_msg).await.unwrap();

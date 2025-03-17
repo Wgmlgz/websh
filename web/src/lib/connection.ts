@@ -6,11 +6,6 @@ import { v4 as uuidv4 } from 'uuid';
 import type { ControlMsg } from '../../../bindings/ControlMsg'
 import type { DataChannelSettingsMsg } from './../../../bindings/DataChannelSettingsMsg';
 
-export type ConnectionData = {
-  serverUrl: string;
-  targetServer: string;
-}
-
 export class ConnectionManager {
   socket: WebSocket;
   pc: RTCPeerConnection;
@@ -136,8 +131,8 @@ export class ConnectionManager {
     this.controlChannel.send(res);
   }
 
-  async startWebShell(term: Terminal) {
-    const sendChannel = this.createDataChannel({ variant: 'web_shell', session_id: null });
+  async startWebShell(term: Terminal, session_id: string) {
+    const sendChannel = this.createDataChannel({ variant: 'web_shell', session_id });
     this.sendChannel = sendChannel
 
     // const enc = new TextDecoder("utf-8");
@@ -199,8 +194,8 @@ export class ConnectionManager {
 
   }
 
-  async startVideo(remoteVideo: HTMLDivElement) {
-    this.sendControl({ StartVideo: { display: 0 } })
+  async startVideo(remoteVideo: HTMLDivElement, display: number) {
+    this.sendControl({ StartVideo: { display } })
     this.pc.ontrack = (event) => {
       console.log('track added', event);
 

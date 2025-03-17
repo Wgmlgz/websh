@@ -5,6 +5,7 @@ use crate::state::State;
 use anyhow::{anyhow, Ok, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use virtual_display::VirtualDisplayManager;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -369,6 +370,7 @@ impl State<WsSignaling> {
         let session_map: SessionMap = Arc::new(std::sync::Mutex::new(HashMap::default()));
         let peer_map: PeerMap = Arc::new(Mutex::new(HashMap::default()));
 
+        let display_manager = Arc::new(VirtualDisplayManager::new().await?);
         Ok(Self {
             api,
             config,
@@ -376,6 +378,7 @@ impl State<WsSignaling> {
             my_name,
             signaling,
             peer_map,
+            display_manager,
         })
     }
 

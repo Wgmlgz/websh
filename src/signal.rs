@@ -1,6 +1,7 @@
-use crate::peer::{on_data_channel, Peer, PeerMap};
+use crate::peer::{Peer, PeerMap};
 use crate::recording::add_video;
 use crate::shell::SessionMap;
+use crate::state::State;
 use anyhow::{anyhow, Ok, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -32,7 +33,6 @@ pub struct Message {
     pub r#type: String,
     pub name: Option<String>,
     pub target: Option<String>,
-    pub session: Option<String>,
     pub data: Option<String>,
     pub peer_type: Option<String>,
     pub from: Option<String>,
@@ -114,15 +114,6 @@ impl Signaling for WsSignaling {
     }
 }
 
-pub struct State<S: Signaling> {
-    pub api: API,
-    pub config: RTCConfiguration,
-    pub session_map: SessionMap,
-    pub my_name: String,
-    pub signaling: Arc<S>,
-    pub peer_map: PeerMap,
-}
-
 impl State<WsSignaling> {
     // async fn create_connection(&self) -> Result<()> {
 
@@ -167,7 +158,6 @@ impl State<WsSignaling> {
                     name: Some(my_name.to_string()),
                     target: Some(t.clone()),
                     data: Some(serde_json::to_string(&candidate.to_json().unwrap()).unwrap()),
-                    session: None,
                     peer_type: None,
                     from: None,
                 };
@@ -214,7 +204,6 @@ impl State<WsSignaling> {
                     name: Some(m.clone().to_string()),
                     target: Some(t.clone()),
                     data: Some(serde_json::to_string(&local_desc).unwrap()),
-                    session: None,
                     peer_type: None,
                     from: None,
                 };
@@ -240,7 +229,7 @@ impl State<WsSignaling> {
         Ok(())
     }
 
-    async fn init_peer_connection(&self, message: Message) -> Result<()> {
+    async fn init_peer_connection(self: Arc<Self>, message: Message) -> Result<()> {
         {
             let user_name = message.clone().from.clone().unwrap();
             let mut map = self.peer_map.lock().await;
@@ -256,11 +245,18 @@ impl State<WsSignaling> {
                 let (peer_connection, mut done_rx) = self
                     .create_peer_connection(from.ok_or(anyhow!("no from"))?)
                     .await?;
+
                 // Register data channel creation handling
+                let self_ref = self.clone();
+                let pc = peer_connection.clone();
                 peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
-                    if let Err(e) =
-                        on_data_channel(d, message_clone.clone().session, session_map.clone())
-                    {
+                    let pc = pc.clone();
+                    let self_ref = self_ref.clone();
+                    if let Err(e) = self_ref.on_data_channel(
+                        pc,
+                        d,
+                        session_map.clone(),
+                    ) {
                         log::error!("Failed to handle data channel: {}", e.to_string())
                     }
                     Box::pin(async {})
@@ -271,23 +267,14 @@ impl State<WsSignaling> {
                         peer_connection: peer_connection.clone(),
                     },
                 );
-
-                // let _ = peer_connection.create_data_channel("dummy", None).await?;
-
-                let p = peer_connection.clone();
-                tokio::spawn(async move {
-                    // sleep(Duration::from_secs(5)).await;
-                    dbg!("pending!!!");
-                    add_video(&p).await.unwrap();
-                });
             }
         }
 
         Ok(())
     }
 
-    async fn handle_offer(&self, message: Message) -> Result<()> {
-        self.init_peer_connection(message.clone()).await?;
+    async fn handle_offer(self: Arc<Self>, message: Message) -> Result<()> {
+        self.clone().init_peer_connection(message.clone()).await?;
         let map = self.peer_map.lock().await;
         let Some(peer) = map.get(&message.from.clone().ok_or(anyhow!("no from"))?) else {
             return Err(anyhow!("peer not found"));
@@ -320,7 +307,6 @@ impl State<WsSignaling> {
                 name: Some(my_name.clone().to_string()),
                 target: Some(message.clone().from.ok_or(anyhow!("No from provides"))?),
                 data: Some(serde_json::to_string(&local_desc)?),
-                session: None,
                 peer_type: None,
                 from: None,
             };
@@ -342,7 +328,6 @@ impl State<WsSignaling> {
             r#type: "register".to_string(),
             name: Some(my_name.clone()),
             peer_type: Some(peer_type.to_string()),
-            session: None,
             target: None,
             data: None,
             from: None,
@@ -394,7 +379,7 @@ impl State<WsSignaling> {
         })
     }
 
-    pub async fn handle_ws_message(&self, text: String) -> Result<()> {
+    pub async fn handle_ws_message(self: Arc<Self>, text: String) -> Result<()> {
         let message: Message = serde_json::from_str(&text)?;
         match message.r#type.as_str() {
             "connection_request" => {
@@ -421,17 +406,22 @@ impl State<WsSignaling> {
         }
         Ok(())
     }
+
+    pub async fn signal_loop(self: Arc<Self>) {
+        let signaling = self.clone().signaling.clone();
+
+        while let Some(msg) = signaling.next().await {
+            let state = self.clone();
+            if let Err(e) = state.handle_ws_message(msg).await {
+                log::error!("Error while handling ws message: {}", e.to_string())
+            }
+        }
+    }
 }
 
 pub async fn connect(my_name: String, peer_type: String, url: String) -> Result<()> {
-    let state = State::new(my_name, peer_type, url).await?;
-    // Handle incoming messages
-    // let write_clone = write.clone();
-    while let Some(msg) = state.signaling.next().await {
-        if let Err(e) = state.handle_ws_message(msg).await {
-            log::error!("Error while handling ws message: {}", e.to_string())
-        }
-    }
+    let state = Arc::new(State::new(my_name, peer_type, url).await?);
+    state.signal_loop().await;
 
     Result::Ok(())
 }

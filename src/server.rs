@@ -10,6 +10,8 @@ pub mod port;
 pub mod recording;
 pub mod shell;
 pub mod signal;
+pub mod state;
+pub mod control;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

@@ -19,7 +19,6 @@
 
   let video: HTMLDivElement;
   const onResize = (fitAddon: FitAddon) => {
-    console.log('sus');
     try {
       fitAddon.fit();
     } catch (err) {
@@ -30,22 +29,14 @@
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
     term.open(terminal);
-    // fitAddon.fit();
 
     const xterm_resize_ob = new ResizeObserver(function (entries) {
-      // since we are observing only a single element, so we access the first element in entries array
       onResize(fitAddon);
     });
 
     xterm_resize_ob.observe(terminal);
 
-    manager = new ConnectionManager(
-      connection.serverUrl,
-      connection.targetServer,
-      connection.targetSession,
-      term,
-      video
-    );
+    manager = new ConnectionManager(connection.serverUrl, connection.targetServer);
     status = manager.status;
   });
 
@@ -56,13 +47,15 @@
 <Card.Root>
   <Card.Header>
     <Card.Title>
-      {connection.targetSession}@{connection.targetServer} via {connection.serverUrl}
+      {connection.targetServer}@{connection.serverUrl}
     </Card.Title>
     <Card.Description>Status: {$status}</Card.Description>
   </Card.Header>
   <Card.Content>
     <div bind:this={terminal}></div>
+    <Button on:click={() => manager?.startWebShell(term)}>Start terminal</Button>
     <div bind:this={video} />
+    <Button on:click={() => manager?.startVideo(video)}>Start Video</Button>
   </Card.Content>
   <Card.Footer>
     <p>Card Footer</p>

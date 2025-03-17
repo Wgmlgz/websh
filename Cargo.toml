@@ -40,8 +40,8 @@ futures-util = "0.3.31"
 clap = { version = "4.5.20", features = [
   "derive",
 ] }
-rustdesk = { path = "./rustdesk" }
-scrap = { path = "./rustdesk/libs/scrap" }
+# rustdesk = { path = "./rustdesk" }
+# scrap = { path = "./rustdesk/libs/scrap" }
 vpx-encode = "0.6.2"
 env-libvpx-sys = { version = "5.1.3", features = [
   "generate",
@@ -52,6 +52,8 @@ gstreamer-app = "0.23.5"
 gstreamer-webrtc = "0.23.5"
 image = "0.25.5"
 crossbeam = "0.8.4"
+ts-rs = "10.1.0"
+uuid = { version = "1.16.0", features = ["v4"] }
 # virtual-display = { path = "./virtual-display" }
 
 [[bin]]

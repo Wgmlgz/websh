@@ -4,13 +4,13 @@
   import type { ConnectionData } from '$lib/connection';
 
   let connections: ConnectionData[] = [];
-  const startSession = (connection: ConnectionData) => {
+  const startConnection = (connection: ConnectionData) => {
     connections = [...connections, connection];
   };
 </script>
 
 <div>
-  <Init sus={startSession} />
+  <Init sus={startConnection} />
   <div class="grid">
     {#if connections.length}
       {#each connections as connection}

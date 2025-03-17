@@ -90,8 +90,6 @@ function handleWs(sock: WebSocket) {
           case 'offer':
           case 'answer':
           case 'signal': {
-            const session = message.session;
-
             // Forward signaling messages to the connected peer
             const connectedPeerName = message.target;
             if (!connectedPeerName || !peers.has(connectedPeerName)) {
@@ -109,7 +107,6 @@ function handleWs(sock: WebSocket) {
               JSON.stringify({
                 type: message.type,
                 from: peerName,
-                session,
                 data: message.data,
               })
             );
@@ -117,8 +114,6 @@ function handleWs(sock: WebSocket) {
           }
           case 'candidate': {
             peerName = message.name;
-            const session = message.session;
-
             // peerType = message.peerType;
             if (!peers.has(peerName)) {
               // Name already taken
@@ -146,7 +141,6 @@ function handleWs(sock: WebSocket) {
               JSON.stringify({
                 type: 'candidate',
                 from: peerName,
-                session,
                 data: message.data,
               })
             );

@@ -4,3 +4,6 @@
 [submodule "vcpkg"]
 	path = vcpkg
 	url = https://github.com/microsoft/vcpkg.git
+[submodule "virtual-display-rs"]
+	path = virtual-display-rs
+	url = https://github.com/MolotovCherry/virtual-display-rs.git

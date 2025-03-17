@@ -3,11 +3,12 @@ import type { Terminal } from '@xterm/xterm';
 import { toast } from 'svelte-sonner';
 import { writable, type Writable } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
+import type { ControlMsg } from '../../../bindings/ControlMsg'
+import type { DataChannelSettingsMsg } from './../../../bindings/DataChannelSettingsMsg';
 
 export type ConnectionData = {
   serverUrl: string;
   targetServer: string;
-  targetSession: string;
 }
 
 export class ConnectionManager {
@@ -16,13 +17,11 @@ export class ConnectionManager {
   myName: string;
   status: Writable<string>;
   sendChannel: RTCDataChannel | null = null;
+  controlChannel: RTCDataChannel | null = null;
 
   constructor(
     public server_url: string,
     public targetServer: string,
-    public targetSession: string,
-    public term: Terminal,
-    public remoteVideo: HTMLVideoElement,
     public onConnected = () => { }
   ) {
     this.socket = this.setupWebSocket();
@@ -75,7 +74,7 @@ export class ConnectionManager {
       );
       this.status.set('Connected to server');
 
-      this.startSession(this.targetServer, this.targetSession, this.term)
+      this.startSession(this.targetServer)
     };
     return socket;
   }
@@ -96,23 +95,49 @@ export class ConnectionManager {
     this.status.set('TURN credentials updated');
   }
 
+  createDataChannel(msg: DataChannelSettingsMsg, dataChannelOptions: RTCDataChannelInit = {
+    //ordered: false,
+    //maxPacketLifeTime: 10,
+    ordered: true
+  }) {
+    return this.pc.createDataChannel(JSON.stringify(msg), dataChannelOptions);
+  }
 
-  async startSession(targetServer: string, targetSession: string, term: Terminal) {
-    if (!targetServer) {
-      return toast.error('Target server name must not be empty');
-    }
-    // const targetSession = targetSession;
-    if (!targetSession) {
-      return toast.error('Target session name must not be empty');
-    }
+  async createControl() {
 
-    const dataChannelOptions: RTCDataChannelInit = {
-      //ordered: false,
-      //maxPacketLifeTime: 10,
-      ordered: true
+    const controlChannel = this.createDataChannel({ variant: 'control', session_id: null });
+    this.controlChannel = controlChannel
+
+    controlChannel.onclose = () => this.status.set('Control Channel has closed');
+    controlChannel.onopen = () => {
+      this.onConnected()
+      this.status.set('Control Channel has opened')
     };
 
-    const sendChannel = this.pc.createDataChannel('web_shell', dataChannelOptions);
+    const dec = new TextDecoder();
+
+
+    controlChannel.onmessage = async (e) => {
+      const data = e.data;
+      const decoded = dec.decode(data);
+      const msg = JSON.parse(decoded);
+
+      if (msg.output) {
+        console.log(msg.output)
+      }
+    };
+  }
+
+  async sendControl(data: ControlMsg) {
+    if (!this.controlChannel) throw new Error('Control channel not opened yet');
+    const enc = new TextEncoder();
+    const msg = JSON.stringify(data);
+    const res = enc.encode(msg);
+    this.controlChannel.send(res);
+  }
+
+  async startWebShell(term: Terminal) {
+    const sendChannel = this.createDataChannel({ variant: 'web_shell', session_id: null });
     this.sendChannel = sendChannel
 
     // const enc = new TextDecoder("utf-8");
@@ -158,16 +183,24 @@ export class ConnectionManager {
       }
     };
 
-    // this.pc.ontrack = (event) => {
-    //   console.log('track added', event);
+    term.onResize(({ cols, rows }) => {
+      send({
+        resize: {
+          rows,
+          cols,
+          pixel_width: 0,
+          pixel_height: 0,
+        }
+      });
+    });
+    term.onData((data: string) => {
+      send({ input: data });
+    });
 
-    //   const remoteStream = new MediaStream();
-    //   event.streams[0].getTracks().forEach(track => {
-    //     remoteStream.addTrack(track);
-    //   });
-    //   this.remoteVideo.srcObject = remoteStream;
-    // }
+  }
 
+  async startVideo(remoteVideo: HTMLDivElement) {
+    this.sendControl({ StartVideo: { display: 0 } })
     this.pc.ontrack = (event) => {
       console.log('track added', event);
 
@@ -181,22 +214,14 @@ export class ConnectionManager {
         // el.parentNode?.removeChild(el);
       }
 
-      this.remoteVideo.appendChild(el)
+      remoteVideo.appendChild(el)
     }
+  }
 
-
-
-
-    term.onResize(({ cols, rows }) => {
-      send({
-        resize: {
-          rows,
-          cols,
-          pixel_width: 0,
-          pixel_height: 0,
-        }
-      });
-    });
+  async startSession(targetServer: string) {
+    if (!targetServer) {
+      return toast.error('Target server name must not be empty');
+    }
 
     this.pc.oniceconnectionstatechange = () => this.status.set(this.pc.iceConnectionState);
     this.pc.onconnectionstatechange = () => this.status.set(this.pc.connectionState);
@@ -213,15 +238,11 @@ export class ConnectionManager {
         JSON.stringify({
           type: 'offer',
           target: targetServer,
-          session: targetSession,
           data: JSON.stringify(this.pc.localDescription)
         })
       );
     };
 
-    term.onData((data: string) => {
-      send({ input: data });
-    });
 
     this.socket.onmessage = async (event) => {
       const message = JSON.parse(event.data);
@@ -239,25 +260,20 @@ export class ConnectionManager {
           if (data.type === 'offer') {
             await this.pc.setRemoteDescription(new RTCSessionDescription(data));
           }
-          console.log('amogus2');
 
           const answer = await this.pc.createAnswer({
             // offerToReceiveAudio: true,
             // offerToReceiveVideo: true,
           });
           await this.pc.setLocalDescription(answer);
-          console.log('amogus3');
 
           this.socket.send(
             JSON.stringify({
               type: 'answer',
               target: targetServer,
-              session: targetSession,
               data: JSON.stringify(answer)
             })
           );
-          console.log('amogus5');
-
           break;
         }
         case 'answer': {
@@ -265,9 +281,6 @@ export class ConnectionManager {
           if (data.type === 'answer') {
             await this.pc.setRemoteDescription(new RTCSessionDescription(data));
           }
-          // else if (data.candidate) {
-          //   await this.pc.addIceCandidate(new RTCIceCandidate(data));
-          // }
           break;
         }
         case 'candidate': {
@@ -302,6 +315,7 @@ export class ConnectionManager {
         target: targetServer
       })
     );
+    this.createControl()
   }
 
   close() {

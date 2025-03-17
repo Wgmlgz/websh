@@ -7,7 +7,8 @@ use clap::Parser;
 use env_logger::Env;
 use peer::Peer;
 use rand::distributions::{Alphanumeric, DistString};
-use signal::{Message, Signaling, State};
+use signal::{Message, Signaling};
+use state::State;
 use tokio::{
     io::{self, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,6 +23,8 @@ pub mod port;
 pub mod shell;
 pub mod signal;
 pub mod recording;
+pub mod control;
+pub mod state;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -61,7 +64,6 @@ pub async fn start_client(cli: Cli) -> Result<()> {
 async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
     log::info!("new connection");
     let name = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
-    let session = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
     log::info!("Staring with {}", &name);
 
     let name = cli.name.clone().unwrap_or(name.clone());
@@ -75,11 +77,7 @@ async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
 
     let state_clone = state.clone();
     tokio::spawn(async move {
-        while let Some(msg) = state_clone.signaling.next().await {
-            if let Err(e) = state_clone.handle_ws_message(msg).await {
-                log::error!("Error while handling ws message: {}", e.to_string())
-            }
-        }
+        state_clone.signal_loop().await;
         Box::pin(async move {})
     });
     let target: String = "server1".into();
@@ -105,7 +103,6 @@ async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
     let peer_connection2 = peer_connection.clone();
     let name2 = name.clone();
     let target2 = target.clone();
-    let session = session.clone();
     let signaling2 = state.signaling.clone();
 
     peer_connection.on_negotiation_needed(Box::new(move || {
@@ -113,7 +110,6 @@ async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
 
         let name = name2.clone();
         let target = target2.clone();
-        let session = session.clone();
         let signaling = signaling2.clone();
 
         Box::pin(async move {
@@ -128,7 +124,6 @@ async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
                 name: Some(name.clone().to_string()),
                 target: Some(target.clone()),
                 data: Some(serde_json::to_string(&local_desc).unwrap()),
-                session: Some(session),
                 peer_type: None,
                 from: None,
             };
@@ -142,7 +137,6 @@ async fn connect_to_peer(cli: Arc<Cli>) -> Result<Arc<RTCPeerConnection>> {
         name: None,
         target: Some(target.clone()),
         data: None,
-        session: None,
         peer_type: None,
         from: None,
     };

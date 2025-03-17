@@ -9,13 +9,13 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
 #[derive(Clone)]
-pub struct PTYSession {
+pub struct Session {
     pub to_pty: mpsc::Sender<Bytes>,        // To send data to PTY
     pub from_pty: broadcast::Sender<Bytes>, // To receive data from PTY
     pub done_tx: mpsc::Sender<()>,           // To signal done
 }
 
-pub type SessionMap = Arc<Mutex<HashMap<String, PTYSession>>>;
+pub type SessionMap = Arc<Mutex<HashMap<String, Session>>>;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ShellMsg {

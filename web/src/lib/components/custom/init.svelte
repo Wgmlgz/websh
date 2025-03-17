@@ -33,14 +33,14 @@
         <Label for="name" class="text-right">Target Server Name:</Label>
         <Input id="name" bind:value={targetServer} class="col-span-3" />
       </div>
-      <div class="grid grid-cols-4 items-center gap-4">
+      <!-- <div class="grid grid-cols-4 items-center gap-4">
         <Label for="username" class="text-right">Target Session Name:</Label>
         <Input id="username" bind:value={targetSession} class="col-span-3" />
-      </div>
+      </div> -->
     </div>
     <AlertDialog.Footer>
       <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-      <AlertDialog.Action on:click={() => sus({ serverUrl, targetServer, targetSession })}>
+      <AlertDialog.Action on:click={() => sus({ serverUrl, targetServer })}>
         Connect!
       </AlertDialog.Action>
     </AlertDialog.Footer>

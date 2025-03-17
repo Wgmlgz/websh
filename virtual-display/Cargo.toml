@@ -3,10 +3,15 @@ name = "virtual-display"
 version = "0.1.0"
 edition = "2021"
 
-[dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 cocoa = "0.26.0"
 core-graphics = "0.24.0"
+
+[dependencies]
+anyhow = "1"
+driver-ipc = { path = "../virtual-display-rs/rust/driver-ipc" }
+windows = "0.60.0"
 
 [build-dependencies]
 bindgen = "0.71.1"

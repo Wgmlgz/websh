@@ -54,7 +54,7 @@ image = "0.25.5"
 crossbeam = "0.8.4"
 ts-rs = "10.1.0"
 uuid = { version = "1.16.0", features = ["v4"] }
-# virtual-display = { path = "./virtual-display" }
+virtual-display = { path = "./virtual-display" }
 
 [[bin]]
 name = "server"
@@ -69,9 +69,9 @@ name = "sus"
 path = "src/sus.rs"
 
 
-[env]
-VCPKG_ROOT = "C:\\users\\wgmlg\\websh\\vcpkg"
-LIBCLANG_PATH = "C:\\clang+llvm-20.1.0-rc2-x86_64-pc-windows-msvc\\lib"
+# [env]
+# VCPKG_ROOT = "C:\\users\\wgmlg\\websh\\vcpkg"
+# LIBCLANG_PATH = "C:\\clang+llvm-20.1.0-rc2-x86_64-pc-windows-msvc\\lib"
 
 # [profile.release]
 # debug = true

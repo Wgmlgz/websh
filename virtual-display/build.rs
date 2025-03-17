@@ -4,11 +4,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn main() {
-    if !cfg!(target_os = "macos") {
-        return;
-    }
-
+fn macos() {
     println!("cargo:rerun-if-changed=CGVirtualDisplayPrivate.h");
 
     let sdk_path = Command::new("xcrun")
@@ -53,4 +49,13 @@ fn main() {
 
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs");
     std::fs::write(&out_path, final_code).expect("Couldn't write bindings!");
+}
+
+fn windows() {}
+fn main() {
+    if cfg!(target_os = "macos") {
+        macos();
+        return;
+    }
+    if cfg!(target_os = "windows") {}
 }

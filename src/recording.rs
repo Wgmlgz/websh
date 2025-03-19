@@ -139,7 +139,7 @@ fn capture_loop_gstreamer(
     handle: &Handle,
 ) -> Result<()> {
     let pipeline_str = r#"
-    d3d11screencapturesrc monitor-index=2 show-cursor=true
+    d3d11screencapturesrc monitor-index=-1 show-cursor=true
         ! video/x-raw,framerate=60/1
         ! videoscale
         ! video/x-raw,width=[1,1920],height=[1,1080]

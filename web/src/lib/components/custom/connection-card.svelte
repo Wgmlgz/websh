@@ -10,7 +10,8 @@
   import * as Card from '$lib/components/ui/card';
   import { v4 as uuidv4 } from 'uuid';
   import { FitAddon } from '@xterm/addon-fit';
-  import type { ConnectionData } from '$lib/state';
+  import { state, type ConnectionData, type VideoState } from '$lib/state';
+  import VideoItem from './video-item.svelte';
 
   let terminal: HTMLDivElement;
   export let connection: ConnectionData;
@@ -19,7 +20,6 @@
   let status: Writable<string>;
   let manager: ConnectionManager | null = null;
 
-  let video: HTMLDivElement;
   const onResize = (fitAddon: FitAddon) => {
     try {
       fitAddon.fit();
@@ -27,6 +27,7 @@
       console.log(err);
     }
   };
+
   onMount(() => {
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
@@ -42,24 +43,45 @@
     status = manager.status;
   });
 
+  const addVideo = (video_state: VideoState) => {
+    state.update((state) => {
+      connection.videos ??= [];
+      connection.videos.push(video_state);
+      return state;
+    });
+    connection.videos;
+  };
   onDestroy(() => {});
   $: console.log($status);
 </script>
 
-<Card.Root>
-  <Card.Header>
-    <Card.Title>
-      {connection.targetServer}@{connection.serverUrl}
-    </Card.Title>
-    <Card.Description>Status: {$status}</Card.Description>
-  </Card.Header>
-  <Card.Content>
-    <div bind:this={terminal}></div>
-    <Button on:click={() => manager?.startWebShell(term, uuidv4())}>Start terminal</Button>
-    <div bind:this={video} />
-    <Button on:click={() => manager?.startVideo(video, 0)}>Start Video</Button>
-  </Card.Content>
-  <Card.Footer>
-    <p>Card Footer</p>
-  </Card.Footer>
-</Card.Root>
+{#if manager != null}
+  <Card.Root>
+    <Card.Header>
+      <Card.Title>
+        {connection.targetServer}@{connection.serverUrl}
+      </Card.Title>
+      <Card.Description>Status: {$status}</Card.Description>
+    </Card.Header>
+    <Card.Content>
+      <div bind:this={terminal}></div>
+      <Button on:click={() => manager?.startWebShell(term, uuidv4())}>Start terminal</Button>
+      {#each connection.videos ?? [] as video_state (video_state.id)}
+        <VideoItem bind:manager {video_state} />
+      {/each}
+      <Button
+        on:click={() =>
+          addVideo({
+            id: uuidv4(),
+            display_id: (connection.videos ?? []).length + 1,
+            width: 1920,
+            height: 1080,
+            refresh_rate: 60
+          })}>Start Video</Button
+      >
+    </Card.Content>
+    <Card.Footer>
+      <p>Card Footer</p>
+    </Card.Footer>
+  </Card.Root>
+{/if}

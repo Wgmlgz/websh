@@ -25,6 +25,7 @@ pub mod signal;
 pub mod recording;
 pub mod control;
 pub mod state;
+pub mod utils;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

@@ -5,6 +5,8 @@ import { writable, type Writable } from 'svelte/store';
 import { v4 as uuidv4 } from 'uuid';
 import type { ControlMsg } from '../../../bindings/ControlMsg'
 import type { DataChannelSettingsMsg } from './../../../bindings/DataChannelSettingsMsg';
+import type { ControlMsgBody } from '../../../bindings/ControlMsgBody';
+import type { StartVideoMsg } from '../../../bindings/StartVideoMsg';
 
 export class ConnectionManager {
   socket: WebSocket;
@@ -123,10 +125,19 @@ export class ConnectionManager {
     };
   }
 
-  async sendControl(data: ControlMsg) {
+  control_id: number = 0
+
+  getControlId() {
+    return ++this.control_id;
+  }
+
+  async sendControl(data: ControlMsgBody) {
     if (!this.controlChannel) throw new Error('Control channel not opened yet');
     const enc = new TextEncoder();
-    const msg = JSON.stringify(data);
+    const msg = JSON.stringify({
+      id: this.getControlId(),
+      body: data,
+    } satisfies ControlMsg);
     const res = enc.encode(msg);
     this.controlChannel.send(res);
   }
@@ -194,8 +205,11 @@ export class ConnectionManager {
 
   }
 
-  async startVideo(remoteVideo: HTMLDivElement, display: number) {
-    this.sendControl({ StartVideo: { display } })
+  async startVideo(remoteVideo: HTMLDivElement, StartVideo: StartVideoMsg) {
+    console.log('sus');
+    this.sendControl({
+      StartVideo
+    })
     this.pc.ontrack = (event) => {
       console.log('track added', event);
 

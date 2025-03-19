@@ -6,7 +6,11 @@ export type TerminalState = {
 }
 
 export type VideoState = {
-  display: number,
+  id: string,
+  display_id: number,
+  width: number | null,
+  height: number | null,
+  refresh_rate: number | null
 }
 
 export type ConnectionData = {

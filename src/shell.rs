@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, mpsc};
 pub struct Session {
     pub to_pty: mpsc::Sender<Bytes>,        // To send data to PTY
     pub from_pty: broadcast::Sender<Bytes>, // To receive data from PTY
-    pub done_tx: mpsc::Sender<()>,           // To signal done
+    pub done_tx: broadcast::Sender<()>,           // To signal done
 }
 
 pub type SessionMap = Arc<Mutex<HashMap<String, Session>>>;
@@ -27,7 +27,7 @@ pub struct ShellMsg {
 pub async fn handle_pty(
     tx: broadcast::Sender<Bytes>,  // From PTY to clients
     mut rx: mpsc::Receiver<Bytes>, // From clients to PTY
-    mut done_rx: Receiver<()>,
+    mut done_rx: broadcast::Receiver<()>,
 ) {
     let pty_system = native_pty_system();
     let pair = pty_system

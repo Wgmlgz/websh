@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, mpsc};
 pub async fn handle_port(
     tx: broadcast::Sender<Bytes>,  // From server to clients
     mut rx: mpsc::Receiver<Bytes>, // From clients to server
-    _done_rx: Receiver<()>,
+    _done_rx: broadcast::Receiver<()>,
 ) {
     const SSH_SERVER_HOST: &str = "localhost";
     const SSH_SERVER_PORT: u16 = 22;

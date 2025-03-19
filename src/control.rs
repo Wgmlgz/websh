@@ -75,25 +75,37 @@ where
     async fn control_inner_loop(
         manager: Arc<VirtualDisplayManager>,
         pc: Arc<RTCPeerConnection>,
-        // tx: broadcast::Sender<Bytes>,  // From server to clients
-        // mut rx: mpsc::Receiver<Bytes>, // From clients to server
-        // mut done_rx: Receiver<()>,
         msg: ControlMsg,
+        mut done_rx: broadcast::Receiver<()>,
     ) -> Result<ControlResBody> {
         match msg.body {
             ControlMsgBody::Empty => todo!(),
             ControlMsgBody::StartVideo(start_video_msg) => {
                 dbg!(&"sus");
+                let id = start_video_msg.display_id;
                 manager
                     .update_display(
-                        start_video_msg.display_id,
+                        id,
                         start_video_msg.width,
                         start_video_msg.height,
                         start_video_msg.refresh_rate,
                     )
                     .await?;
-                let p = pc.clone();
-                add_video(&p, start_video_msg).await.unwrap();
+                let p: Arc<RTCPeerConnection> = pc.clone();
+                let mut done_rx_clone = done_rx.resubscribe();
+                tokio::spawn(async move {
+                    if let Err(e) = done_rx_clone.recv().await.map_err(|e| anyhow!(e)).and_then(|_| {
+                        tokio::spawn(async move {
+                            if let Err(e) = manager.remove_display(id).await {
+                                log::error!("Failed to remove display: {}", e);
+                            }
+                        });
+                        Ok(())
+                    }) {
+                        log::error!("Some error idc 1: {}", e);
+                    }
+                });
+                add_video(p, start_video_msg, done_rx).await?;
             }
         }
 
@@ -105,14 +117,16 @@ where
         pc: Arc<RTCPeerConnection>,
         tx: broadcast::Sender<Bytes>,  // From server to clients
         mut rx: mpsc::Receiver<Bytes>, // From clients to server
-        mut done_rx: Receiver<()>,
+        mut done_rx: broadcast::Receiver<()>,
     ) {
         let manager = self.display_manager.clone();
+
+        let done_rx_copy = done_rx.resubscribe();
 
         tokio::spawn(async move {
             while let Some(json) = rx.recv().await {
                 let manager = manager.clone();
-
+                let done_rx = done_rx_copy.resubscribe();
                 let parse_res = parse_msg(json);
 
                 let Ok(msg) = parse_res else {
@@ -123,7 +137,9 @@ where
                     continue;
                 };
                 let id = msg.id;
-                let res = Self::control_inner_loop(manager, pc.clone(), msg).await;
+                dbg!("ok nig");
+                let res =
+                    Self::control_inner_loop(manager, pc.clone(), msg, done_rx.resubscribe()).await;
 
                 let res = match res {
                     Ok(res) => res,
@@ -132,6 +148,7 @@ where
                     }),
                 };
 
+                dbg!(&res);
                 if let Err(e) =
                     to_json(&ControlResMsg { id, body: res }).and_then(|json| -> Result<usize> {
                         tx.send(json.into()).map_err(|e| anyhow!(e))

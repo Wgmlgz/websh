@@ -5,7 +5,6 @@ use crate::state::State;
 use anyhow::{anyhow, Ok, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use virtual_display::VirtualDisplayManager;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
@@ -15,6 +14,7 @@ use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite;
+use virtual_display::VirtualDisplayManager;
 use webrtc::api::interceptor_registry::register_default_interceptors;
 use webrtc::api::media_engine::MediaEngine;
 use webrtc::api::{APIBuilder, API};
@@ -122,10 +122,10 @@ impl State<WsSignaling> {
     pub async fn create_peer_connection<'a>(
         &self,
         target: String,
-    ) -> Result<(Arc<RTCPeerConnection>, tokio::sync::mpsc::Receiver<()>)> {
+    ) -> Result<(Arc<RTCPeerConnection>, tokio::sync::broadcast::Receiver<()>)> {
         let peer_connection = Arc::new(self.api.new_peer_connection(self.config.clone()).await?);
 
-        let (done_tx, done_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let (done_tx, done_rx) = tokio::sync::broadcast::channel::<()>(1);
 
         // Set the handler for Peer connection state
         // This will notify you when the peer has connected/disconnected
@@ -138,7 +138,7 @@ impl State<WsSignaling> {
                     // Use webrtc.PeerConnectionStateDisconnected if you are interested in detecting faster timeout.
                     // Note that the PeerConnection may come back from PeerConnectionStateDisconnected.
                     log::error!("Peer Connection has gone to failed exiting");
-                    let _ = done_tx.try_send(());
+                    let _ = done_tx.send(());
                 }
 
                 Box::pin(async {})
@@ -253,11 +253,9 @@ impl State<WsSignaling> {
                 peer_connection.on_data_channel(Box::new(move |d: Arc<RTCDataChannel>| {
                     let pc = pc.clone();
                     let self_ref = self_ref.clone();
-                    if let Err(e) = self_ref.on_data_channel(
-                        pc,
-                        d,
-                        session_map.clone(),
-                    ) {
+                    if let Err(e) =
+                        self_ref.on_data_channel(pc, d, session_map.clone(), done_rx.resubscribe())
+                    {
                         log::error!("Failed to handle data channel: {}", e.to_string())
                     }
                     Box::pin(async {})

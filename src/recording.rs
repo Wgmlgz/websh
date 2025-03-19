@@ -5,6 +5,7 @@ use std::io::ErrorKind::WouldBlock;
 use std::sync::Arc;
 use std::time::{self, Instant};
 use tokio::runtime::Handle;
+use tokio::sync::broadcast;
 use tokio::task;
 use tokio::time::Duration;
 use webrtc::api::media_engine::{
@@ -26,35 +27,14 @@ use gstreamer_app as gst_app;
 use crate::control::StartVideoMsg;
 
 // Add a single video track
-pub async fn add_video(pc: &Arc<RTCPeerConnection>, msg: StartVideoMsg) -> Result<()> {
-    // let video_track = Arc::new(TrackLocalStaticSample::new(
-    //     RTCRtpCodecCapability {
-    //         mime_type: MIME_TYPE_VP8.to_owned(),
-    //         ..Default::default()
-    //     },
-    //     format!("video-{}", rand::random::<u32>()),
-    //     format!("video-{}", rand::random::<u32>()),
-    // ));
-
-    // ----------------------------
-    // Suppose you already have a webrtc-rs TrackLocalStaticSample
-    // We'll just mock it here as `t`. In real code, you set it up properly.
-    // ----------------------------
-    // let h264_codec_cap = webrtc::rtp_transceiver::rtp_codec::RTCRtpCodecCapability {
-    //     mime_type: "video/h264".to_string(),
-    //     ..Default::default()
-    // };
-
+pub async fn add_video(
+    pc: Arc<RTCPeerConnection>,
+    msg: StartVideoMsg,
+    mut done_rx: broadcast::Receiver<()>,
+) -> Result<()> {
     let video_track = Arc::new(TrackLocalStaticSample::new(
-        // h264_codec_cap,
         RTCRtpCodecCapability {
-            mime_type:
-            //  if is_vp9 {
-                // MIME_TYPE_VP9.to_owned(),
-            // } else {
-                // MIME_TYPE_AV1.to_owned(),
-                MIME_TYPE_H264.to_owned(),
-            // },
+            mime_type: MIME_TYPE_H264.to_owned(),
             ..Default::default()
         },
         format!("video-{}", rand::random::<u32>()),
@@ -78,19 +58,35 @@ pub async fn add_video(pc: &Arc<RTCPeerConnection>, msg: StartVideoMsg) -> Resul
         Result::<()>::Ok(())
     });
 
-    {
-        tokio::spawn(async move {
-            let res = write_video_to_track2(video_track, msg).await;
-            dbg!(res);
-        });
-    }
+    // This bool can be used to stop the loop from another place if you want.
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let stop_flag_clone = stop_flag.clone();
+    // Clone track and stop-flag for the blocking thread:
+    tokio::spawn(async move {
+        if let Err(e) = done_rx.recv().await.map_err(|e| anyhow!(e)).and_then(|_| {
+            stop_flag_clone.swap(true, Ordering::Acquire);
+            tokio::spawn(async move {
+                if let Err(e) = remove_video(pc).await {
+                    log::error!("Failed to remove display: {}", e);
+                }
+            });
+            Ok(())
+        }) {
+            log::error!("Some error idc 2: {}", e);
+        }
+    });
+
+    tokio::spawn(async move {
+        let res = write_video_to_track2(video_track, msg, stop_flag).await;
+        dbg!(res);
+    });
 
     println!("Video track has been added");
     Ok(())
 }
 
 // Remove a single sender
-async fn remove_video(pc: &Arc<RTCPeerConnection>) -> Result<()> {
+async fn remove_video(pc: Arc<RTCPeerConnection>) -> Result<()> {
     let senders = pc.get_senders().await;
     if !senders.is_empty() {
         if let Err(err) = pc.remove_track(&senders[0]).await {
@@ -110,21 +106,16 @@ struct CapturedFrame {
 pub async fn write_video_to_track2(
     track: Arc<TrackLocalStaticSample>,
     msg: StartVideoMsg,
+    stop_flag: Arc<AtomicBool>,
 ) -> Result<()> {
-    // This bool can be used to stop the loop from another place if you want.
-    let stop_flag = Arc::new(AtomicBool::new(false));
+    dbg!("sus????");
 
-    // Clone track and stop-flag for the blocking thread:
-    let track_clone = Arc::clone(&track);
-    let stop_clone = Arc::clone(&stop_flag);
-
-    // We need the current Tokio handle so we can call async `track.write_sample(...)`
-    // from within the blocking code via `handle.block_on(...)`.
     let handle = Handle::current();
+    let track_clone = Arc::clone(&track);
 
     // Spawn a blocking thread to do the capturing:
     task::spawn_blocking(move || {
-        if let Err(e) = capture_loop_gstreamer(track_clone, msg, stop_clone, &handle) {
+        if let Err(e) = capture_loop_gstreamer(track_clone, msg, stop_flag, &handle) {
             eprintln!("Capture loop error: {:?}", e);
         }
     });

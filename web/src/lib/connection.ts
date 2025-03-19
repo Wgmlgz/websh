@@ -7,7 +7,6 @@ import type { ControlMsg } from '../../../bindings/ControlMsg'
 import type { DataChannelSettingsMsg } from './../../../bindings/DataChannelSettingsMsg';
 import type { ControlMsgBody } from '../../../bindings/ControlMsgBody';
 import type { StartVideoMsg } from '../../../bindings/StartVideoMsg';
-
 export class ConnectionManager {
   socket: WebSocket;
   pc: RTCPeerConnection;
@@ -15,6 +14,7 @@ export class ConnectionManager {
   status: Writable<string>;
   sendChannel: RTCDataChannel | null = null;
   controlChannel: RTCDataChannel | null = null;
+  public ready = writable(false)
 
   constructor(
     public server_url: string,
@@ -107,6 +107,7 @@ export class ConnectionManager {
 
     controlChannel.onclose = () => this.status.set('Control Channel has closed');
     controlChannel.onopen = () => {
+      this.ready.set(true)
       this.onConnected()
       this.status.set('Control Channel has opened')
     };
@@ -117,8 +118,8 @@ export class ConnectionManager {
     controlChannel.onmessage = async (e) => {
       const data = e.data;
       const decoded = dec.decode(data);
+      console.log('huh', decoded);
       const msg = JSON.parse(decoded);
-
       if (msg.output) {
         console.log(msg.output)
       }
@@ -138,6 +139,8 @@ export class ConnectionManager {
       id: this.getControlId(),
       body: data,
     } satisfies ControlMsg);
+    console.log('Sending control msg', msg);
+
     const res = enc.encode(msg);
     this.controlChannel.send(res);
   }
@@ -206,7 +209,6 @@ export class ConnectionManager {
   }
 
   async startVideo(remoteVideo: HTMLDivElement, StartVideo: StartVideoMsg) {
-    console.log('sus');
     this.sendControl({
       StartVideo
     })
@@ -217,6 +219,7 @@ export class ConnectionManager {
       el.srcObject = event.streams[0]
       el.autoplay = true
       el.controls = true
+      el.muted = true
 
       event.track.onmute = function (event) {
         console.log(event);

@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::{
     borrow::Borrow,
     collections::HashSet,
@@ -156,22 +156,25 @@ impl VirtualDisplayManager {
         height: Option<u32>,
         refresh_rate: Option<u32>,
     ) -> Result<()> {
-        let mut client = self.client.lock().await;
+        dbg!("huh??");
 
-        let res = client.find_monitor_mut_query(&id.to_string(), |monitor| {
-            monitor.enabled = true;
-            if let Some(current_mode) = monitor.modes.first_mut() {
-                *current_mode = Mode {
-                    width: width.unwrap_or(current_mode.width),
-                    height: height.unwrap_or(current_mode.height),
-                    refresh_rates: vec![
-                        refresh_rate.unwrap_or(*current_mode.refresh_rates.first().unwrap_or(&60))
-                    ],
-                };
-                // Keep only one mode
-                monitor.modes.truncate(1);
-            }
-        });
+        let res = {
+            let mut client = self.client.lock().await;
+            client.find_monitor_mut_query(&id.to_string(), |monitor| {
+                monitor.enabled = true;
+                if let Some(current_mode) = monitor.modes.first_mut() {
+                    *current_mode = Mode {
+                        width: width.unwrap_or(current_mode.width),
+                        height: height.unwrap_or(current_mode.height),
+                        refresh_rates: vec![refresh_rate
+                            .unwrap_or(*current_mode.refresh_rates.first().unwrap_or(&60))],
+                    };
+                    // Keep only one mode
+                    monitor.modes.truncate(1);
+                }
+            })
+        };
+        dbg!("huh2??");
 
         if let None = res {
             self.create_display(
@@ -180,12 +183,15 @@ impl VirtualDisplayManager {
                 height.unwrap_or(1080),
                 refresh_rate.unwrap_or(60),
             )
-            .await
-            .unwrap();
+            .await?;
         };
+        dbg!("huh3??");
 
+        let mut client = self.client.lock().await;
         client.persist()?;
         client.notify().await?;
+        dbg!("huh4??");
+
         Ok(())
     }
 
@@ -234,26 +240,26 @@ impl VirtualDisplayManager {
     }
 }
 
-pub struct VirtualDisplayManagerWrapper {
-    command_tx: mpsc::UnboundedSender<DisplayCommand>,
-}
+// pub struct VirtualDisplayManagerWrapper {
+//     command_tx: mpsc::UnboundedSender<DisplayCommand>,
+// }
 
-impl VirtualDisplayManagerWrapper {
-    pub async fn new() -> Result<Self> {
-        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+// impl VirtualDisplayManagerWrapper {
+//     pub async fn new() -> Result<Self> {
+//         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
 
-        // Spawn a dedicated handler thread
-        tokio::spawn(async move {
-            let client = VirtualDisplayManager::new().await.unwrap();
+//         // Spawn a dedicated handler thread
+//         tokio::spawn(async move {
+//             let client = VirtualDisplayManager::new().await.unwrap();
 
-            while let Some(command) = command_rx.recv().await {
-                client.handle_command(command).await;
-            }
-        });
+//             while let Some(command) = command_rx.recv().await {
+//                 client.handle_command(command).await;
+//             }
+//         });
 
-        Ok(Self { command_tx })
-    }
-}
+//         Ok(Self { command_tx })
+//     }
+// }
 
 impl Drop for VirtualDisplayManager {
     fn drop(&mut self) {}
